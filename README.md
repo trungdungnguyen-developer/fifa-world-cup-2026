@@ -45,6 +45,31 @@ http://localhost:5176
    - Publish directory: `.`
 6. Deploy.
 
+## Tự cập nhật dữ liệu bằng API
+
+App có Netlify Function tại `/api/worldcup`. Frontend sẽ tự gọi endpoint này khi chạy trên Netlify. Nếu API chưa cấu hình hoặc bị lỗi, app sẽ dùng dữ liệu dự phòng trong `app.js`.
+
+### Nguồn API được hỗ trợ
+
+1. **API-FOOTBALL / API-SPORTS**  
+   Biến môi trường Netlify:
+   - `API_FOOTBALL_KEY`: API key của bạn
+   - `API_FOOTBALL_LEAGUE_ID`: mặc định `1`
+   - `API_FOOTBALL_SEASON`: mặc định `2026`
+
+2. **football-data.org**  
+   Biến môi trường Netlify:
+   - `FOOTBALL_DATA_TOKEN`: API token của bạn
+
+### Cách cấu hình trên Netlify
+
+1. Vào site trên Netlify.
+2. Chọn **Site configuration** -> **Environment variables**.
+3. Thêm `API_FOOTBALL_KEY` hoặc `FOOTBALL_DATA_TOKEN`.
+4. Deploy lại site.
+
+Ưu tiên dùng `API_FOOTBALL_KEY` vì API này thường có fixtures, standings và dữ liệu trận đấu chi tiết hơn. Gói miễn phí có giới hạn request/ngày, nên function đã bật cache ngắn hạn để giảm số lần gọi API.
+
 ## Ghi chú dữ liệu
 
-Dữ liệu hiện tại là dữ liệu mẫu để trình diễn giao diện. Khi triển khai thật, có thể thay mảng dữ liệu trong `app.js` bằng dữ liệu từ API thể thao/FIFA hoặc backend riêng.
+Dữ liệu trong `app.js` hiện là fallback để web vẫn chạy khi API chưa cấu hình. Khi có API key trên Netlify, web sẽ ưu tiên dữ liệu từ `/api/worldcup`.

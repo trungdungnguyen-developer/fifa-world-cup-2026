@@ -1,4 +1,4 @@
-const teams = [
+let teams = [
   { id: "mex", name: "Mexico", short: "MEX", flag: "mx", group: "A", played: 2, won: 2, drawn: 0, lost: 0, gf: 3, ga: 0, points: 6 },
   { id: "kor", name: "Hàn Quốc", short: "KOR", flag: "kr", group: "A", played: 2, won: 1, drawn: 0, lost: 1, gf: 2, ga: 2, points: 3 },
   { id: "cze", name: "Czechia", short: "CZE", flag: "cz", group: "A", played: 2, won: 0, drawn: 1, lost: 1, gf: 2, ga: 3, points: 1 },
@@ -49,7 +49,7 @@ const teams = [
   { id: "cro", name: "Croatia", short: "CRO", flag: "hr", group: "L", played: 1, won: 0, drawn: 0, lost: 1, gf: 2, ga: 4, points: 0 }
 ];
 
-const matches = [
+let matches = [
   result(1, "A", "2026-06-11T13:00:00-06:00", "Estadio Azteca, Mexico City", "Mexico", "Nam Phi", 2, 0, ["9' Julián Quiñones", "67' Raúl Jiménez"]),
   result(2, "A", "2026-06-11T20:00:00-06:00", "Estadio Akron, Guadalajara", "Hàn Quốc", "Czechia", 2, 1, ["67' Hwang In-beom", "80' Oh Hyeon-gyu", "59' Ladislav Krejčí"]),
   result(3, "A", "2026-06-18T12:00:00-04:00", "Mercedes-Benz Stadium, Atlanta", "Czechia", "Nam Phi", 1, 1, ["6' Michal Sadílek", "83' Teboho Mokoena (pen.)"]),
@@ -167,7 +167,9 @@ function matchSearch(value) {
 function teamChip(name) {
   const team = getTeam(name);
   const fallback = team?.short || name.slice(0, 3).toUpperCase();
-  const flag = team?.flag
+  const flag = team?.logo
+    ? `<img src="${team.logo}" alt="${name}" loading="lazy" />`
+    : team?.flag
     ? `<img src="https://flagcdn.com/w80/${team.flag}.png" alt="Cờ ${name}" loading="lazy" />`
     : fallback;
   return `<span class="flag">${flag}</span><span class="team-name">${name}</span>`;
@@ -278,8 +280,10 @@ function renderStats() {
   document.querySelector("#upcomingCount").textContent = matches.filter((match) => match.status === "upcoming").length;
   document.querySelector("#goalCount").textContent = goals;
   const featured = played[played.length - 1];
-  document.querySelector("#featuredMatch").textContent = `${featured.home} ${featured.homeScore} - ${featured.awayScore} ${featured.away}`;
-  document.querySelector("#featuredMeta").textContent = `Bảng ${featured.group} · dữ liệu cập nhật 23/06/2026`;
+  if (featured) {
+    document.querySelector("#featuredMatch").textContent = `${featured.home} ${featured.homeScore} - ${featured.awayScore} ${featured.away}`;
+    document.querySelector("#featuredMeta").textContent = `Bảng ${featured.group} · dữ liệu mới nhất`;
+  }
 }
 
 function render() {
@@ -297,12 +301,41 @@ function render() {
 
 function renderGroupOptions() {
   const groupFilter = document.querySelector("#groupFilter");
+  groupFilter.querySelectorAll("option:not([value='all'])").forEach((option) => option.remove());
   [...new Set(teams.map((team) => team.group))].sort().forEach((group) => {
     const option = document.createElement("option");
     option.value = group;
     option.textContent = `Bảng ${group}`;
     groupFilter.append(option);
   });
+}
+
+async function loadRemoteData() {
+  if (location.protocol === "file:") return null;
+
+  try {
+    const response = await fetch("/api/worldcup", { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const data = await response.json();
+
+    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 12) {
+      throw new Error("API data is incomplete");
+    }
+
+    showDataSource(data);
+    return data;
+  } catch (error) {
+    console.warn("Không tải được API World Cup, dùng dữ liệu fallback:", error);
+    showDataSource({ source: "Dữ liệu dự phòng trong app", updatedAt: "2026-06-23T00:00:00+07:00" });
+    return null;
+  }
+}
+
+function showDataSource(data) {
+  const note = document.querySelector(".note p");
+  if (!note) return;
+  const updated = data.updatedAt ? formatter.format(new Date(data.updatedAt)) : "không rõ thời điểm";
+  note.textContent = `Nguồn dữ liệu: ${data.source || "fallback"} · Cập nhật: ${updated}. Thống kê nâng cao chỉ hiện khi API có dữ liệu đáng tin cậy.`;
 }
 
 function openMatchDialog(matchId) {
@@ -362,6 +395,16 @@ document.addEventListener("keydown", (event) => {
 });
 document.querySelector(".close-dialog").addEventListener("click", () => document.querySelector("#matchDialog").close());
 
-renderGroupOptions();
-renderStats();
-render();
+async function initApp() {
+  const remoteData = await loadRemoteData();
+  if (remoteData) {
+    teams = remoteData.teams;
+    matches = remoteData.matches;
+  }
+
+  renderGroupOptions();
+  renderStats();
+  render();
+}
+
+initApp();

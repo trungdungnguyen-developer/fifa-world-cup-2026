@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lịch thi đấu World Cup 2026</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <nav class="topbar" aria-label="Thanh điều hướng chính">
+          <a class="brand" href="#tong-quan" aria-label="World Cup 2026">
+            <span class="brand-mark">26</span>
+            <span>
+              <strong>World Cup 2026</strong>
+              <small>Lịch đấu, tỷ số, bảng xếp hạng</small>
+            </span>
+          </a>
+          <div class="top-actions">
+            <label class="search-box">
+              <span>Tìm</span>
+              <input id="searchInput" type="search" placeholder="Đội bóng, sân, thành phố..." />
+            </label>
+            <select id="groupFilter" aria-label="Lọc theo bảng">
+              <option value="all">Tất cả bảng</option>
+            </select>
+          </div>
+        </nav>
+
+        <section id="tong-quan" class="hero-content">
+          <div>
+            <p class="eyebrow">FIFA World Cup 26</p>
+            <h1>Theo dõi World Cup 2026 bằng tiếng Việt</h1>
+            <p class="hero-copy">
+              Xem bảng xếp hạng, tỷ số đã qua, lịch thi đấu sắp tới và chi tiết từng trận trong một giao diện nhanh, rõ và thân thiện.
+            </p>
+          </div>
+          <div class="hero-score" aria-label="Trận nổi bật">
+            <span class="live-pill">Đang cập nhật</span>
+            <p>Trận nổi bật</p>
+            <strong id="featuredMatch">Mexico 2 - 1 Hàn Quốc</strong>
+            <small id="featuredMeta">Bảng A · Estadio Azteca</small>
+          </div>
+        </section>
+      </header>
+
+      <main>
+        <section class="stats-grid" aria-label="Thống kê nhanh">
+          <article>
+            <span id="teamCount">48</span>
+            <p>Đội tuyển</p>
+          </article>
+          <article>
+            <span id="playedCount">0</span>
+            <p>Trận đã đấu</p>
+          </article>
+          <article>
+            <span id="upcomingCount">0</span>
+            <p>Trận sắp tới</p>
+          </article>
+          <article>
+            <span id="goalCount">0</span>
+            <p>Bàn thắng</p>
+          </article>
+        </section>
+
+        <section class="workspace">
+          <aside class="side-panel" aria-label="Chế độ xem">
+            <button class="tab-button active" data-view="standings">Bảng xếp hạng</button>
+            <button class="tab-button" data-view="results">Tỷ số đã qua</button>
+            <button class="tab-button" data-view="schedule">Lịch sắp tới</button>
+            <div class="note">
+              <strong>Ghi chú</strong>
+              <p>Dữ liệu hiện là mẫu để trình diễn app. Có thể thay bằng API FIFA/đối tác thể thao khi triển khai thật.</p>
+            </div>
+          </aside>
+
+          <section class="content-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" id="viewKicker">Tổng quan bảng đấu</p>
+                <h2 id="viewTitle">Bảng xếp hạng</h2>
+              </div>
+              <span id="resultCount" class="count-badge">0 mục</span>
+            </div>
+
+            <div id="standingsView" class="view active-view"></div>
+            <div id="resultsView" class="view"></div>
+            <div id="scheduleView" class="view"></div>
+            <div id="emptyState" class="empty-state" hidden>
+              <strong>Không tìm thấy dữ liệu phù hợp</strong>
+              <p>Thử đổi từ khóa hoặc chọn lại bảng đấu.</p>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="matchDialog" class="match-dialog">
+      <div class="dialog-card">
+        <button class="close-dialog" aria-label="Đóng chi tiết trận đấu">×</button>
+        <div id="dialogContent"></div>
+      </div>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

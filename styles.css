@@ -408,10 +408,19 @@ td strong {
   height: 34px;
   place-items: center;
   border-radius: 50%;
+  border: 1px solid rgba(71, 74, 74, 0.16);
   color: var(--white);
-  background: var(--charcoal);
+  background: var(--silver);
   font-size: 12px;
   font-weight: 800;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.flag img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .match-list {
@@ -568,6 +577,14 @@ td strong {
 
 .timeline-item.card-event {
   border-left-color: var(--red);
+}
+
+.detail-note {
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(42, 57, 141, 0.08);
+  color: #596060;
+  line-height: 1.55;
 }
 
 .minute {

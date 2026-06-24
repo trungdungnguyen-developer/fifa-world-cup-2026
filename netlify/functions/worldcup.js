@@ -1,29 +1,46 @@
 const WORLD_CUP_LEAGUE_ID = process.env.API_FOOTBALL_LEAGUE_ID || "1";
 const WORLD_CUP_SEASON = process.env.API_FOOTBALL_SEASON || "2026";
 const WORLD_CUP_FALLBACK_LEAGUE_IDS = ["1", "37", "31", "33", "34", "30", "587", "927", "950", "1213"];
+const API_CACHE_SECONDS = Number(process.env.API_CACHE_SECONDS || 21600);
+const API_STALE_SECONDS = Number(process.env.API_STALE_SECONDS || 86400);
+const FALLBACK_CACHE_SECONDS = Number(process.env.API_FALLBACK_CACHE_SECONDS || 3600);
 
 exports.handler = async () => {
-  try {
-    if (process.env.API_FOOTBALL_KEY) {
+  if (process.env.API_FOOTBALL_KEY) {
+    try {
       const data = await getApiFootballData();
       return json(data, 200);
-    }
+    } catch (apiFootballError) {
+      if (process.env.FOOTBALL_DATA_TOKEN) {
+        try {
+          const data = await getFootballDataOrgData();
+          return json(data, 200);
+        } catch (footballDataError) {
+          return json(fallbackBody(apiFootballError, footballDataError), 200, fallbackCacheControl());
+        }
+      }
 
-    if (process.env.FOOTBALL_DATA_TOKEN) {
+      return json(fallbackBody(apiFootballError), 200, fallbackCacheControl());
+    }
+  }
+
+  if (process.env.FOOTBALL_DATA_TOKEN) {
+    try {
       const data = await getFootballDataOrgData();
       return json(data, 200);
+    } catch (footballDataError) {
+      return json(fallbackBody(footballDataError), 200, fallbackCacheControl());
     }
-
-    return json({
-      error: "Missing API key",
-      message: "Set API_FOOTBALL_KEY or FOOTBALL_DATA_TOKEN in Netlify environment variables."
-    }, 503);
-  } catch (error) {
-    return json({
-      error: "World Cup API failed",
-      message: error.message
-    }, 502);
   }
+
+  return json({
+    fallback: true,
+    source: "Fallback data in app.js",
+    updatedAt: new Date().toISOString(),
+    message: "Set API_FOOTBALL_KEY or FOOTBALL_DATA_TOKEN in Netlify environment variables.",
+    teams: [],
+    matches: []
+  }, 200, fallbackCacheControl());
 };
 
 async function getApiFootballData() {
@@ -253,15 +270,34 @@ function normalizeApiFootballStatus(status) {
   return "upcoming";
 }
 
-function json(body, statusCode) {
+function fallbackBody(primaryError, secondaryError) {
+  const messages = [primaryError, secondaryError].filter(Boolean).map((error) => error.message);
+  return {
+    fallback: true,
+    source: "Fallback data in app.js",
+    updatedAt: new Date().toISOString(),
+    message: "Live World Cup API is temporarily unavailable or has incomplete data. The app will use its local fallback data.",
+    apiError: messages.join(" | "),
+    teams: [],
+    matches: []
+  };
+}
+
+function cacheControl() {
+  return `public, max-age=300, s-maxage=${API_CACHE_SECONDS}, stale-while-revalidate=${API_STALE_SECONDS}`;
+}
+
+function fallbackCacheControl() {
+  return `public, max-age=300, s-maxage=${FALLBACK_CACHE_SECONDS}, stale-while-revalidate=${API_STALE_SECONDS}`;
+}
+
+function json(body, statusCode, cacheHeader = cacheControl()) {
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      "Netlify-CDN-Cache-Control": "no-store",
-      Pragma: "no-cache",
-      Expires: "0"
+      "Cache-Control": cacheHeader,
+      "Netlify-CDN-Cache-Control": cacheHeader
     },
     body: JSON.stringify(body)
   };

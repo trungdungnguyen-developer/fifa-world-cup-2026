@@ -47,7 +47,7 @@ http://localhost:5176
 
 ## Tự cập nhật dữ liệu bằng API
 
-App có Netlify Function tại `/api/worldcup`. Frontend sẽ tự gọi endpoint này khi chạy trên Netlify, thêm cache-buster theo thời gian truy cập và tự refresh mỗi 60 giây khi người dùng đang mở trang. Nếu API chưa cấu hình hoặc bị lỗi, app sẽ dùng dữ liệu dự phòng trong `app.js`.
+App có Netlify Function tại `/api/worldcup`. Frontend sẽ tự gọi endpoint này khi chạy trên Netlify và tự refresh mỗi 60 phút khi người dùng đang mở trang. Netlify Function cache dữ liệu 6 giờ mặc định để tiết kiệm quota API miễn phí. Nếu API chưa cấu hình, hết quota hoặc dữ liệu World Cup 2026 trên API chưa đầy đủ, app sẽ dùng dữ liệu dự phòng trong `app.js`.
 
 ### Nguồn API được hỗ trợ
 
@@ -56,6 +56,8 @@ App có Netlify Function tại `/api/worldcup`. Frontend sẽ tự gọi endpoin
    - `API_FOOTBALL_KEY`: API key của bạn
    - `API_FOOTBALL_LEAGUE_ID`: mặc định `1`
    - `API_FOOTBALL_SEASON`: mặc định `2026`
+   - `API_CACHE_SECONDS`: mặc định `21600` giây, tức 6 giờ
+   - `API_FALLBACK_CACHE_SECONDS`: mặc định `3600` giây, tức 1 giờ khi API lỗi hoặc hết quota
 
 2. **football-data.org**  
    Biến môi trường Netlify:
@@ -68,7 +70,7 @@ App có Netlify Function tại `/api/worldcup`. Frontend sẽ tự gọi endpoin
 3. Thêm `API_FOOTBALL_KEY` hoặc `FOOTBALL_DATA_TOKEN`.
 4. Deploy lại site.
 
-Ưu tiên dùng `API_FOOTBALL_KEY` vì API này thường có fixtures, standings và dữ liệu trận đấu chi tiết hơn. Gói miễn phí có giới hạn request/ngày; hiện function đã tắt cache để ưu tiên realtime theo yêu cầu, nên hãy theo dõi quota API.
+Ưu tiên dùng `API_FOOTBALL_KEY` vì API này thường có fixtures, standings và dữ liệu trận đấu chi tiết hơn. Gói miễn phí có giới hạn request/ngày; cache 6 giờ giúp nhiều người truy cập vẫn dùng chung dữ liệu cache thay vì mỗi lượt vào web lại gọi API thật.
 
 ## Ghi chú dữ liệu
 

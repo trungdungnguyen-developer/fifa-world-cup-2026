@@ -143,9 +143,10 @@ const formatter = new Intl.DateTimeFormat("vi-VN", {
   hour: "2-digit",
   minute: "2-digit"
 });
-const REFRESH_INTERVAL_MS = 60 * 1000;
+const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 let countdownTimer;
 let refreshTimer;
+let lastRemoteFetchAt = 0;
 
 function result(id, group, date, venue, home, away, homeScore, awayScore, events) {
   return { id, group, status: "finished", date, venue, home, away, homeScore, awayScore, events: events.map((text) => ({ type: "goal", text })) };
@@ -468,18 +469,15 @@ async function loadRemoteData() {
   if (location.protocol === "file:") return null;
 
   try {
-    const response = await fetch(`/api/worldcup?ts=${Date.now()}`, {
-      cache: "no-store",
-      headers: {
-        Accept: "application/json",
-        "Cache-Control": "no-cache"
-      }
+    lastRemoteFetchAt = Date.now();
+    const response = await fetch("/api/worldcup", {
+      headers: { Accept: "application/json" }
     });
     if (!response.ok) throw new Error(`API ${response.status}`);
     const data = await response.json();
 
     if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 12) {
-      throw new Error("API data is incomplete");
+      throw new Error(data.message || data.apiError || "API data is incomplete");
     }
 
     showDataSource(data);
@@ -495,7 +493,7 @@ function showDataSource(data) {
   const note = document.querySelector(".note p");
   if (!note) return;
   const updated = data.updatedAt ? formatter.format(new Date(data.updatedAt)) : "không rõ thời điểm";
-  note.textContent = `Nguồn dữ liệu: ${data.source || "fallback"} · Cập nhật: ${updated}. App gọi API mới mỗi khi truy cập và tự refresh khi đang mở trang.`;
+  note.textContent = `Nguồn dữ liệu: ${data.source || "fallback"} · Cập nhật: ${updated}. App tự động cập nhật theo cache Netlify để tiết kiệm quota API.`;
 }
 
 function openTeamsDialog() {
@@ -630,5 +628,7 @@ async function initApp() {
 initApp();
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshRemoteData();
+  if (!document.hidden && Date.now() - lastRemoteFetchAt > REFRESH_INTERVAL_MS) {
+    refreshRemoteData();
+  }
 });

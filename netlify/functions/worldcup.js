@@ -1,5 +1,6 @@
 const WORLD_CUP_LEAGUE_ID = process.env.API_FOOTBALL_LEAGUE_ID || "1";
 const WORLD_CUP_SEASON = process.env.API_FOOTBALL_SEASON || "2026";
+const WORLD_CUP_FALLBACK_LEAGUE_IDS = ["1", "37", "31", "33", "34", "30", "587", "927", "950", "1213"];
 
 exports.handler = async () => {
   try {
@@ -49,13 +50,13 @@ async function getApiFootballData() {
 
 async function getWorldCupLeagueCandidates() {
   const candidates = new Set([String(WORLD_CUP_LEAGUE_ID)]);
+  WORLD_CUP_FALLBACK_LEAGUE_IDS.forEach((id) => candidates.add(id));
 
   try {
     const data = await apiFootball("/leagues?search=world%20cup");
     for (const item of data.response || []) {
       const name = String(item.league?.name || "").toLowerCase();
-      const hasSeason = (item.seasons || []).some((season) => String(season.year) === String(WORLD_CUP_SEASON));
-      if (name.includes("world cup") && item.league?.id && hasSeason) {
+      if (name.includes("world cup") && item.league?.id) {
         candidates.add(String(item.league.id));
       }
     }

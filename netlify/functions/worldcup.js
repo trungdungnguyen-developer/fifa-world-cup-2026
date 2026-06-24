@@ -4,6 +4,8 @@ const WORLD_CUP_FALLBACK_LEAGUE_IDS = ["1", "37", "31", "33", "34", "30", "587",
 const API_CACHE_SECONDS = Number(process.env.API_CACHE_SECONDS || 21600);
 const API_STALE_SECONDS = Number(process.env.API_STALE_SECONDS || 86400);
 const FALLBACK_CACHE_SECONDS = Number(process.env.API_FALLBACK_CACHE_SECONDS || 3600);
+const AUTO_DISCOVER_LEAGUES = process.env.API_FOOTBALL_AUTO_DISCOVER === "true";
+const TRY_FALLBACK_LEAGUE_IDS = process.env.API_FOOTBALL_TRY_FALLBACK_IDS === "true";
 
 exports.handler = async () => {
   if (process.env.API_FOOTBALL_KEY) {
@@ -51,7 +53,7 @@ async function getApiFootballData() {
     const data = await getApiFootballDataForLeague(leagueId);
     attempts.push(data.debug);
 
-    if (data.teams.length >= 12 && data.matches.length) {
+    if (data.teams.length >= 2 && data.matches.length) {
       return {
         source: `API-FOOTBALL / API-SPORTS · league ${leagueId}`,
         updatedAt: new Date().toISOString(),
@@ -66,8 +68,17 @@ async function getApiFootballData() {
 }
 
 async function getWorldCupLeagueCandidates() {
-  const candidates = new Set([String(WORLD_CUP_LEAGUE_ID)]);
-  WORLD_CUP_FALLBACK_LEAGUE_IDS.forEach((id) => candidates.add(id));
+  const configuredIds = (process.env.API_FOOTBALL_LEAGUE_IDS || WORLD_CUP_LEAGUE_ID)
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const candidates = new Set(configuredIds.length ? configuredIds : [String(WORLD_CUP_LEAGUE_ID)]);
+
+  if (TRY_FALLBACK_LEAGUE_IDS) {
+    WORLD_CUP_FALLBACK_LEAGUE_IDS.forEach((id) => candidates.add(id));
+  }
+
+  if (!AUTO_DISCOVER_LEAGUES) return [...candidates];
 
   try {
     const data = await apiFootball("/leagues?search=world%20cup");
@@ -85,12 +96,16 @@ async function getWorldCupLeagueCandidates() {
 }
 
 async function getApiFootballDataForLeague(leagueId) {
-  const [standingsData, fixturesData] = await Promise.all([
-    apiFootball(`/standings?league=${leagueId}&season=${WORLD_CUP_SEASON}`),
-    apiFootball(`/fixtures?league=${leagueId}&season=${WORLD_CUP_SEASON}`)
-  ]);
+  const fixturesData = await apiFootball(`/fixtures?league=${leagueId}&season=${WORLD_CUP_SEASON}`);
+  let standingsData = null;
 
-  const standings = standingsData.response?.[0]?.league?.standings || [];
+  try {
+    standingsData = await apiFootball(`/standings?league=${leagueId}&season=${WORLD_CUP_SEASON}`);
+  } catch (error) {
+    console.warn("Could not load API-FOOTBALL standings, deriving table from fixtures:", error);
+  }
+
+  const standings = standingsData?.response?.[0]?.league?.standings || [];
   let teams = standings.flatMap((groupRows) => groupRows.map((row) => {
     const group = cleanGroupName(row.group);
     return {
@@ -119,8 +134,8 @@ async function getApiFootballDataForLeague(leagueId) {
       venue: [item.fixture.venue?.name, item.fixture.venue?.city].filter(Boolean).join(", "),
       home: normalizeTeamName(item.teams.home.name),
       away: normalizeTeamName(item.teams.away.name),
-      homeScore: status === "finished" ? item.goals.home : undefined,
-      awayScore: status === "finished" ? item.goals.away : undefined,
+      homeScore: status === "finished" || status === "live" ? item.goals.home : undefined,
+      awayScore: status === "finished" || status === "live" ? item.goals.away : undefined,
       events: []
     };
   }).filter((match) => match.home && match.away);
@@ -144,32 +159,78 @@ async function getApiFootballDataForLeague(leagueId) {
 function deriveTeamsFromMatches(fixtures) {
   const byName = new Map();
 
+  const ensureTeam = (apiTeam, group) => {
+    if (!apiTeam?.name) return null;
+    const name = normalizeTeamName(apiTeam.name);
+    if (!byName.has(name)) {
+      byName.set(name, {
+        id: String(apiTeam.id || name),
+        name,
+        short: makeShort(name),
+        logo: apiTeam.logo,
+        group,
+        played: 0,
+        won: 0,
+        drawn: 0,
+        lost: 0,
+        gf: 0,
+        ga: 0,
+        points: 0
+      });
+    }
+
+    const team = byName.get(name);
+    if (!team.group && group) team.group = group;
+    if (!team.logo && apiTeam.logo) team.logo = apiTeam.logo;
+    return team;
+  };
+
   for (const item of fixtures) {
     const group = cleanGroupName(item.league?.round || item.league?.name || "");
-    for (const side of ["home", "away"]) {
-      const apiTeam = item.teams?.[side];
-      if (!apiTeam?.name) continue;
-      const name = normalizeTeamName(apiTeam.name);
-      if (!byName.has(name)) {
-        byName.set(name, {
-          id: String(apiTeam.id || name),
-          name,
-          short: makeShort(name),
-          logo: apiTeam.logo,
-          group,
-          played: 0,
-          won: 0,
-          drawn: 0,
-          lost: 0,
-          gf: 0,
-          ga: 0,
-          points: 0
-        });
-      }
+    const home = ensureTeam(item.teams?.home, group);
+    const away = ensureTeam(item.teams?.away, group);
+    const status = normalizeApiFootballStatus(item.fixture?.status?.short);
+    const homeGoals = Number(item.goals?.home);
+    const awayGoals = Number(item.goals?.away);
+
+    if (status !== "finished" || !home || !away || Number.isNaN(homeGoals) || Number.isNaN(awayGoals)) {
+      continue;
+    }
+
+    home.played += 1;
+    away.played += 1;
+    home.gf += homeGoals;
+    home.ga += awayGoals;
+    away.gf += awayGoals;
+    away.ga += homeGoals;
+
+    if (homeGoals > awayGoals) {
+      home.won += 1;
+      home.points += 3;
+      away.lost += 1;
+    } else if (homeGoals < awayGoals) {
+      away.won += 1;
+      away.points += 3;
+      home.lost += 1;
+    } else {
+      home.drawn += 1;
+      away.drawn += 1;
+      home.points += 1;
+      away.points += 1;
     }
   }
 
-  return [...byName.values()];
+  return [...byName.values()].sort((a, b) => {
+    const groupCompare = (a.group || "").localeCompare(b.group || "");
+    if (groupCompare) return groupCompare;
+    const pointCompare = b.points - a.points;
+    if (pointCompare) return pointCompare;
+    const gdCompare = (b.gf - b.ga) - (a.gf - a.ga);
+    if (gdCompare) return gdCompare;
+    const gfCompare = b.gf - a.gf;
+    if (gfCompare) return gfCompare;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 async function apiFootball(path) {

@@ -346,7 +346,7 @@ async function loadRemoteData() {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const data = await response.json();
 
-    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 12) {
+    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 2 || !data.matches.length) {
       throw new Error("API data is incomplete");
     }
 
@@ -399,15 +399,17 @@ function openMatchDialog(matchId) {
 
 function renderMatchCard(match) {
   const isFinished = match.status === "finished";
-  const cardClass = isFinished ? "past" : "upcoming-card";
-  const score = isFinished ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "vs";
-  const statusText = isFinished ? "Đã kết thúc" : "Sắp diễn ra";
+  const isLive = match.status === "live";
+  const cardClass = isFinished ? "past" : isLive ? "live-card" : "upcoming-card";
+  const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
+  const score = isFinished || isLive || hasScore ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "vs";
+  const statusText = isFinished ? "Đã kết thúc" : isLive ? "Đang diễn ra" : "Sắp diễn ra";
 
   return `
     <article class="match-card ${cardClass}" data-match-id="${match.id}" tabindex="0" role="button" aria-label="${isFinished ? "Xem kết quả" : "Xem lịch"} ${match.home} gặp ${match.away}">
       <div class="team home">${teamChip(match.home)}</div>
       <div class="score-block">
-        <span class="status-pill ${isFinished ? "finished" : "upcoming"}">${statusText}</span>
+        <span class="status-pill ${isFinished ? "finished" : isLive ? "live" : "upcoming"}">${statusText}</span>
         <span class="score">${score}</span>
         <span class="match-meta">Bảng ${match.group || "-"} · ${formatter.format(new Date(match.date))}</span>
         <span class="match-meta">${match.venue || "Đang cập nhật sân"}</span>

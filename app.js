@@ -143,6 +143,9 @@ const formatter = new Intl.DateTimeFormat("vi-VN", {
   hour: "2-digit",
   minute: "2-digit"
 });
+const REFRESH_INTERVAL_MS = 60 * 1000;
+let countdownTimer;
+let refreshTimer;
 
 function result(id, group, date, venue, home, away, homeScore, awayScore, events) {
   return { id, group, status: "finished", date, venue, home, away, homeScore, awayScore, events: events.map((text) => ({ type: "goal", text })) };
@@ -187,6 +190,30 @@ function filteredMatches(status) {
     const groupOk = state.group === "all" || match.group === state.group;
     return match.status === status && groupOk && matchSearch(`${match.home} ${match.away} ${match.venue} Bảng ${match.group}`);
   });
+}
+
+function getFinishedMatches() {
+  return matches
+    .filter((match) => match.status === "finished")
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+function getUpcomingMatches() {
+  const now = Date.now();
+  return matches
+    .filter((match) => match.status !== "finished" && new Date(match.date).getTime() > now)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+function formatCountdown(targetDate) {
+  const diff = new Date(targetDate).getTime() - Date.now();
+  if (diff <= 0) return "Trận đấu đang diễn ra hoặc sắp cập nhật trạng thái";
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const minutes = Math.floor((diff % 3600000) / 60000);
+  const seconds = Math.floor((diff % 60000) / 1000);
+  if (days > 0) return `Còn ${days} ngày ${hours} giờ ${minutes} phút`;
+  return `Còn ${hours} giờ ${minutes} phút ${seconds} giây`;
 }
 
 function sortStandings(a, b) {
@@ -369,6 +396,189 @@ function openMatchDialog(matchId) {
   document.querySelector("#matchDialog").showModal();
 }
 
+function renderMatchCard(match) {
+  const isFinished = match.status === "finished";
+  const cardClass = isFinished ? "past" : "upcoming-card";
+  const score = isFinished ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "vs";
+  const statusText = isFinished ? "Đã kết thúc" : "Sắp diễn ra";
+
+  return `
+    <article class="match-card ${cardClass}" data-match-id="${match.id}" tabindex="0" role="button" aria-label="${isFinished ? "Xem kết quả" : "Xem lịch"} ${match.home} gặp ${match.away}">
+      <div class="team home">${teamChip(match.home)}</div>
+      <div class="score-block">
+        <span class="status-pill ${isFinished ? "finished" : "upcoming"}">${statusText}</span>
+        <span class="score">${score}</span>
+        <span class="match-meta">Bảng ${match.group || "-"} · ${formatter.format(new Date(match.date))}</span>
+        <span class="match-meta">${match.venue || "Đang cập nhật sân"}</span>
+      </div>
+      <div class="team away">${teamChip(match.away)}</div>
+    </article>
+  `;
+}
+
+function renderResults() {
+  const data = getFinishedMatches().filter((match) => {
+    const groupOk = state.group === "all" || match.group === state.group;
+    return groupOk && matchSearch(`${match.home} ${match.away} ${match.venue || ""} Bảng ${match.group}`);
+  });
+  views.results.innerHTML = `<div class="match-list">${data.map(renderMatchCard).join("")}</div>`;
+  return data.length;
+}
+
+function renderSchedule() {
+  const data = getUpcomingMatches().filter((match) => {
+    const groupOk = state.group === "all" || match.group === state.group;
+    return groupOk && matchSearch(`${match.home} ${match.away} ${match.venue || ""} Bảng ${match.group}`);
+  });
+  views.schedule.innerHTML = `<div class="match-list">${data.map(renderMatchCard).join("")}</div>`;
+  return data.length;
+}
+
+function updateFeaturedMatch() {
+  const featured = getUpcomingMatches()[0];
+  const matchEl = document.querySelector("#featuredMatch");
+  const metaEl = document.querySelector("#featuredMeta");
+  const countdownEl = document.querySelector("#featuredCountdown");
+
+  if (!featured) {
+    const latest = getFinishedMatches()[0];
+    matchEl.textContent = latest ? `${latest.home} ${latest.homeScore} - ${latest.awayScore} ${latest.away}` : "Chưa có trận đấu";
+    metaEl.textContent = latest ? `Trận mới nhất · ${formatter.format(new Date(latest.date))}` : "Đang chờ dữ liệu từ API";
+    countdownEl.textContent = "";
+    return;
+  }
+
+  matchEl.textContent = `${featured.home} vs ${featured.away}`;
+  metaEl.textContent = `Bảng ${featured.group || "-"} · ${formatter.format(new Date(featured.date))} · ${featured.venue || "Đang cập nhật sân"}`;
+  countdownEl.textContent = formatCountdown(featured.date);
+}
+
+function renderStats() {
+  const played = getFinishedMatches();
+  const upcoming = getUpcomingMatches();
+  const goals = played.reduce((total, match) => total + Number(match.homeScore || 0) + Number(match.awayScore || 0), 0);
+  document.querySelector("#teamCount").textContent = teams.length;
+  document.querySelector("#playedCount").textContent = played.length;
+  document.querySelector("#upcomingCount").textContent = upcoming.length;
+  document.querySelector("#goalCount").textContent = goals;
+  updateFeaturedMatch();
+}
+
+async function loadRemoteData() {
+  if (location.protocol === "file:") return null;
+
+  try {
+    const response = await fetch(`/api/worldcup?ts=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-cache"
+      }
+    });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const data = await response.json();
+
+    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 12) {
+      throw new Error("API data is incomplete");
+    }
+
+    showDataSource(data);
+    return data;
+  } catch (error) {
+    console.warn("Không tải được API World Cup, dùng dữ liệu fallback:", error);
+    showDataSource({ source: "Dữ liệu dự phòng trong app", updatedAt: "2026-06-23T00:00:00+07:00" });
+    return null;
+  }
+}
+
+function showDataSource(data) {
+  const note = document.querySelector(".note p");
+  if (!note) return;
+  const updated = data.updatedAt ? formatter.format(new Date(data.updatedAt)) : "không rõ thời điểm";
+  note.textContent = `Nguồn dữ liệu: ${data.source || "fallback"} · Cập nhật: ${updated}. App gọi API mới mỗi khi truy cập và tự refresh khi đang mở trang.`;
+}
+
+function openTeamsDialog() {
+  const sortedTeams = [...teams].sort((a, b) => (a.group || "").localeCompare(b.group || "") || a.name.localeCompare(b.name, "vi"));
+  document.querySelector("#dialogContent").innerHTML = `
+    <div class="dialog-title">
+      <p class="eyebrow">48 đội tuyển</p>
+      <h3>Danh sách đội tham dự World Cup 2026</h3>
+      <p>Click ô 48 đội tuyển để xem nhanh cờ và bảng đấu của các đội.</p>
+    </div>
+    <div class="team-gallery">
+      ${sortedTeams.map((team) => `
+        <div class="team-tile">
+          ${teamChip(team.name)}
+          <small>Bảng ${team.group || "-"}</small>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  document.querySelector("#matchDialog").showModal();
+}
+
+function openMatchDialog(matchId) {
+  const match = matches.find((item) => String(item.id) === String(matchId));
+  if (!match) return;
+
+  const isFinished = match.status === "finished";
+  const title = isFinished ? `${match.home} ${match.homeScore ?? 0} - ${match.awayScore ?? 0} ${match.away}` : `${match.home} vs ${match.away}`;
+  const goals = match.events?.length ? match.events.map((event) => `
+    <div class="timeline-item">
+      <span class="minute">Goal</span>
+      <span>${event.text}</span>
+    </div>
+  `).join("") : `<p>${isFinished ? "API chưa trả danh sách ghi bàn chi tiết cho trận này." : "Trận này chưa diễn ra."}</p>`;
+
+  document.querySelector("#dialogContent").innerHTML = `
+    <div class="dialog-title">
+      <p class="eyebrow">${isFinished ? "Kết quả trận đấu" : "Lịch thi đấu"} · Bảng ${match.group || "-"}</p>
+      <h3>${title}</h3>
+      <p>${formatter.format(new Date(match.date))} · ${match.venue || "Đang cập nhật sân"}</p>
+      ${!isFinished ? `<p class="countdown-text">${formatCountdown(match.date)}</p>` : ""}
+    </div>
+    <div class="detail-grid">
+      <div class="detail-box"><span>${isFinished ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "VS"}</span>Tỷ số</div>
+      <div class="detail-box"><span>${match.group || "-"}</span>Bảng</div>
+      <div class="detail-box"><span>${isFinished ? Number(match.homeScore || 0) + Number(match.awayScore || 0) : "Chờ"}</span>Bàn thắng</div>
+      <div class="detail-box"><span>${isFinished ? "API" : "Chờ"}</span>Nguồn dữ liệu</div>
+      <div class="detail-box"><span>Chờ</span>Cầm bóng</div>
+      <div class="detail-box"><span>Chờ</span>Thẻ/Lỗi</div>
+    </div>
+    <p class="detail-note">Tỷ số, lịch và bảng đấu lấy từ API khi đã cấu hình key trên Netlify. Các thống kê nâng cao chỉ hiện khi provider trả dữ liệu đáng tin cậy.</p>
+    <h4>${isFinished ? "Diễn biến ghi bàn" : "Thông tin trận đấu"}</h4>
+    <div class="timeline">${goals}</div>
+  `;
+  document.querySelector("#matchDialog").showModal();
+}
+
+function switchView(view) {
+  state.view = view;
+  document.querySelectorAll(".tab-button").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
+  render();
+  document.querySelector(".content-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function openStatAction(action) {
+  if (action === "teams") {
+    openTeamsDialog();
+    return;
+  }
+  switchView(action);
+}
+
+async function refreshRemoteData({ silent = true } = {}) {
+  const remoteData = await loadRemoteData();
+  if (!remoteData) return;
+  teams = remoteData.teams;
+  matches = remoteData.matches;
+  renderGroupOptions();
+  renderStats();
+  render();
+  if (!silent) showDataSource(remoteData);
+}
+
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", () => {
     state.view = button.dataset.view;
@@ -384,6 +594,15 @@ document.querySelector("#searchInput").addEventListener("input", (event) => {
   state.query = event.target.value.trim();
   render();
 });
+document.querySelectorAll("[data-stat-action]").forEach((item) => {
+  item.addEventListener("click", () => openStatAction(item.dataset.statAction));
+  item.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openStatAction(item.dataset.statAction);
+    }
+  });
+});
 document.addEventListener("click", (event) => {
   const card = event.target.closest("[data-match-id]");
   if (card) openMatchDialog(card.dataset.matchId);
@@ -396,15 +615,20 @@ document.addEventListener("keydown", (event) => {
 document.querySelector(".close-dialog").addEventListener("click", () => document.querySelector("#matchDialog").close());
 
 async function initApp() {
-  const remoteData = await loadRemoteData();
-  if (remoteData) {
-    teams = remoteData.teams;
-    matches = remoteData.matches;
-  }
-
+  await refreshRemoteData({ silent: false });
   renderGroupOptions();
   renderStats();
   render();
+
+  clearInterval(countdownTimer);
+  countdownTimer = setInterval(updateFeaturedMatch, 1000);
+
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => refreshRemoteData(), REFRESH_INTERVAL_MS);
 }
 
 initApp();
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshRemoteData();
+});

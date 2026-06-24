@@ -5,23 +5,23 @@ exports.handler = async () => {
   try {
     if (process.env.API_FOOTBALL_KEY) {
       const data = await getApiFootballData();
-      return json(data, 200, "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400");
+      return json(data, 200);
     }
 
     if (process.env.FOOTBALL_DATA_TOKEN) {
       const data = await getFootballDataOrgData();
-      return json(data, 200, "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400");
+      return json(data, 200);
     }
 
     return json({
       error: "Missing API key",
       message: "Set API_FOOTBALL_KEY or FOOTBALL_DATA_TOKEN in Netlify environment variables."
-    }, 503, "public, max-age=60");
+    }, 503);
   } catch (error) {
     return json({
       error: "World Cup API failed",
       message: error.message
-    }, 502, "public, max-age=60");
+    }, 502);
   }
 };
 
@@ -51,17 +51,17 @@ async function getApiFootballData() {
   }));
 
   const matches = (fixturesData.response || []).map((item) => {
-    const isFinished = ["FT", "AET", "PEN"].includes(item.fixture.status?.short);
+    const status = normalizeApiFootballStatus(item.fixture.status?.short);
     return {
       id: item.fixture.id,
       group: cleanGroupName(item.league.round || item.league.name || ""),
-      status: isFinished ? "finished" : "upcoming",
+      status,
       date: item.fixture.date,
       venue: [item.fixture.venue?.name, item.fixture.venue?.city].filter(Boolean).join(", "),
       home: normalizeTeamName(item.teams.home.name),
       away: normalizeTeamName(item.teams.away.name),
-      homeScore: isFinished ? item.goals.home : undefined,
-      awayScore: isFinished ? item.goals.away : undefined,
+      homeScore: status === "finished" ? item.goals.home : undefined,
+      awayScore: status === "finished" ? item.goals.away : undefined,
       events: []
     };
   }).filter((match) => match.home && match.away);
@@ -113,7 +113,7 @@ async function getFootballDataOrgData() {
     return {
       id: match.id,
       group: cleanGroupName(match.group || match.stage || ""),
-      status: isFinished ? "finished" : "upcoming",
+      status: isFinished ? "finished" : match.status === "IN_PLAY" || match.status === "PAUSED" ? "live" : "upcoming",
       date: match.utcDate,
       venue: match.venue || "",
       home: normalizeTeamName(match.homeTeam.name),
@@ -168,12 +168,21 @@ function makeShort(name) {
     .toUpperCase();
 }
 
-function json(body, statusCode, cacheControl) {
+function normalizeApiFootballStatus(status) {
+  if (["FT", "AET", "PEN"].includes(status)) return "finished";
+  if (["1H", "HT", "2H", "ET", "BT", "P", "LIVE"].includes(status)) return "live";
+  return "upcoming";
+}
+
+function json(body, statusCode) {
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": cacheControl
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Netlify-CDN-Cache-Control": "no-store",
+      Pragma: "no-cache",
+      Expires: "0"
     },
     body: JSON.stringify(body)
   };

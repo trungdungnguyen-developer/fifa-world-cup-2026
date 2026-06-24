@@ -49,29 +49,30 @@
             </p>
           </div>
           <div class="hero-score" aria-label="Trận nổi bật">
-            <span class="live-pill">Đang cập nhật</span>
-            <p>Trận nổi bật</p>
-            <strong id="featuredMatch">Mexico 2 - 1 Hàn Quốc</strong>
-            <small id="featuredMeta">Bảng A · Estadio Azteca</small>
+            <span class="live-pill">Realtime</span>
+            <p>Trận sắp diễn ra gần nhất</p>
+            <strong id="featuredMatch">Đang tải dữ liệu...</strong>
+            <small id="featuredMeta">Đang kiểm tra lịch thi đấu mới nhất</small>
+            <small id="featuredCountdown" class="countdown-text"></small>
           </div>
         </section>
       </header>
 
       <main>
         <section class="stats-grid" aria-label="Thống kê nhanh">
-          <article>
+          <article data-stat-action="teams" role="button" tabindex="0">
             <span id="teamCount">48</span>
             <p>Đội tuyển</p>
           </article>
-          <article>
+          <article data-stat-action="results" role="button" tabindex="0">
             <span id="playedCount">0</span>
             <p>Trận đã đấu</p>
           </article>
-          <article>
+          <article data-stat-action="schedule" role="button" tabindex="0">
             <span id="upcomingCount">0</span>
             <p>Trận sắp tới</p>
           </article>
-          <article>
+          <article data-stat-action="results" role="button" tabindex="0">
             <span id="goalCount">0</span>
             <p>Bàn thắng</p>
           </article>
@@ -84,7 +85,7 @@
             <button class="tab-button" data-view="schedule">Lịch sắp tới</button>
             <div class="note">
               <strong>Ghi chú</strong>
-              <p>Web ưu tiên dữ liệu từ API khi chạy trên Netlify; nếu API chưa cấu hình hoặc hết quota, app sẽ dùng dữ liệu dự phòng.</p>
+              <p>Web ưu tiên dữ liệu realtime từ API khi chạy trên Netlify; nếu API chưa cấu hình hoặc hết quota, app sẽ dùng dữ liệu dự phòng.</p>
             </div>
           </aside>
 

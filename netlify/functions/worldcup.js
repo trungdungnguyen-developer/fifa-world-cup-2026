@@ -26,13 +26,54 @@ exports.handler = async () => {
 };
 
 async function getApiFootballData() {
+  const candidateLeagueIds = await getWorldCupLeagueCandidates();
+  const attempts = [];
+
+  for (const leagueId of candidateLeagueIds) {
+    const data = await getApiFootballDataForLeague(leagueId);
+    attempts.push(data.debug);
+
+    if (data.teams.length >= 12 && data.matches.length) {
+      return {
+        source: `API-FOOTBALL / API-SPORTS · league ${leagueId}`,
+        updatedAt: new Date().toISOString(),
+        teams: data.teams,
+        matches: data.matches,
+        debug: { attempts }
+      };
+    }
+  }
+
+  throw new Error(`API-Football returned incomplete World Cup data. Tried league ids: ${candidateLeagueIds.join(", ")}`);
+}
+
+async function getWorldCupLeagueCandidates() {
+  const candidates = new Set([String(WORLD_CUP_LEAGUE_ID)]);
+
+  try {
+    const data = await apiFootball("/leagues?search=world%20cup");
+    for (const item of data.response || []) {
+      const name = String(item.league?.name || "").toLowerCase();
+      const hasSeason = (item.seasons || []).some((season) => String(season.year) === String(WORLD_CUP_SEASON));
+      if (name.includes("world cup") && item.league?.id && hasSeason) {
+        candidates.add(String(item.league.id));
+      }
+    }
+  } catch (error) {
+    console.warn("Could not auto-discover World Cup league id:", error);
+  }
+
+  return [...candidates];
+}
+
+async function getApiFootballDataForLeague(leagueId) {
   const [standingsData, fixturesData] = await Promise.all([
-    apiFootball(`/standings?league=${WORLD_CUP_LEAGUE_ID}&season=${WORLD_CUP_SEASON}`),
-    apiFootball(`/fixtures?league=${WORLD_CUP_LEAGUE_ID}&season=${WORLD_CUP_SEASON}`)
+    apiFootball(`/standings?league=${leagueId}&season=${WORLD_CUP_SEASON}`),
+    apiFootball(`/fixtures?league=${leagueId}&season=${WORLD_CUP_SEASON}`)
   ]);
 
   const standings = standingsData.response?.[0]?.league?.standings || [];
-  const teams = standings.flatMap((groupRows) => groupRows.map((row) => {
+  let teams = standings.flatMap((groupRows) => groupRows.map((row) => {
     const group = cleanGroupName(row.group);
     return {
       id: String(row.team.id),
@@ -66,14 +107,51 @@ async function getApiFootballData() {
     };
   }).filter((match) => match.home && match.away);
 
-  if (!teams.length || !matches.length) throw new Error("API-Football returned incomplete World Cup data.");
+  if (!teams.length && matches.length) {
+    teams = deriveTeamsFromMatches(fixturesData.response || []);
+  }
 
   return {
-    source: "API-FOOTBALL / API-SPORTS",
-    updatedAt: new Date().toISOString(),
     teams,
-    matches
+    matches,
+    debug: {
+      leagueId,
+      standingsGroups: standings.length,
+      teams: teams.length,
+      matches: matches.length
+    }
   };
+}
+
+function deriveTeamsFromMatches(fixtures) {
+  const byName = new Map();
+
+  for (const item of fixtures) {
+    const group = cleanGroupName(item.league?.round || item.league?.name || "");
+    for (const side of ["home", "away"]) {
+      const apiTeam = item.teams?.[side];
+      if (!apiTeam?.name) continue;
+      const name = normalizeTeamName(apiTeam.name);
+      if (!byName.has(name)) {
+        byName.set(name, {
+          id: String(apiTeam.id || name),
+          name,
+          short: makeShort(name),
+          logo: apiTeam.logo,
+          group,
+          played: 0,
+          won: 0,
+          drawn: 0,
+          lost: 0,
+          gf: 0,
+          ga: 0,
+          points: 0
+        });
+      }
+    }
+  }
+
+  return [...byName.values()];
 }
 
 async function apiFootball(path) {

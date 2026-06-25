@@ -125,6 +125,7 @@ let matches = [
 ];
 
 const state = { view: "standings", group: "all", query: "" };
+let scorers = [];
 const views = {
   standings: document.querySelector("#standingsView"),
   results: document.querySelector("#resultsView"),
@@ -523,32 +524,109 @@ function openMatchDialog(matchId) {
   if (!match) return;
 
   const isFinished = match.status === "finished";
-  const title = isFinished ? `${match.home} ${match.homeScore ?? 0} - ${match.awayScore ?? 0} ${match.away}` : `${match.home} vs ${match.away}`;
+  const isLive = match.status === "live";
+  const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
+  const homeStats = match.statistics?.[match.home] || {};
+  const awayStats = match.statistics?.[match.away] || {};
+  const statPair = (name) => `${homeStats[name] ?? "Chờ"} / ${awayStats[name] ?? "Chờ"}`;
+  const title = isFinished || isLive || hasScore ? `${match.home} ${match.homeScore ?? 0} - ${match.awayScore ?? 0} ${match.away}` : `${match.home} vs ${match.away}`;
   const goals = match.events?.length ? match.events.map((event) => `
     <div class="timeline-item">
       <span class="minute">Goal</span>
       <span>${event.text}</span>
     </div>
-  `).join("") : `<p>${isFinished ? "API chưa trả danh sách ghi bàn chi tiết cho trận này." : "Trận này chưa diễn ra."}</p>`;
+  `).join("") : `<p>${isFinished || isLive ? "API chưa trả danh sách ghi bàn chi tiết cho trận này." : "Trận này chưa diễn ra."}</p>`;
 
   document.querySelector("#dialogContent").innerHTML = `
     <div class="dialog-title">
-      <p class="eyebrow">${isFinished ? "Kết quả trận đấu" : "Lịch thi đấu"} · Bảng ${match.group || "-"}</p>
+      <p class="eyebrow">${isFinished ? "Kết quả trận đấu" : isLive ? "Đang diễn ra" : "Lịch thi đấu"} · Bảng ${match.group || "-"}</p>
       <h3>${title}</h3>
       <p>${formatter.format(new Date(match.date))} · ${match.venue || "Đang cập nhật sân"}</p>
-      ${!isFinished ? `<p class="countdown-text">${formatCountdown(match.date)}</p>` : ""}
+      ${!isFinished && !isLive ? `<p class="countdown-text">${formatCountdown(match.date)}</p>` : ""}
     </div>
     <div class="detail-grid">
-      <div class="detail-box"><span>${isFinished ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "VS"}</span>Tỷ số</div>
+      <div class="detail-box"><span>${isFinished || isLive || hasScore ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "VS"}</span>Tỷ số</div>
       <div class="detail-box"><span>${match.group || "-"}</span>Bảng</div>
-      <div class="detail-box"><span>${isFinished ? Number(match.homeScore || 0) + Number(match.awayScore || 0) : "Chờ"}</span>Bàn thắng</div>
-      <div class="detail-box"><span>${isFinished ? "API" : "Chờ"}</span>Nguồn dữ liệu</div>
-      <div class="detail-box"><span>Chờ</span>Cầm bóng</div>
-      <div class="detail-box"><span>Chờ</span>Thẻ/Lỗi</div>
+      <div class="detail-box"><span>${isFinished || isLive || hasScore ? Number(match.homeScore || 0) + Number(match.awayScore || 0) : "Chờ"}</span>Bàn thắng</div>
+      <div class="detail-box"><span>${isFinished || isLive || hasScore ? "API" : "Chờ"}</span>Nguồn dữ liệu</div>
+      <div class="detail-box"><span>${statPair("Ball Possession")}</span>Cầm bóng</div>
+      <div class="detail-box"><span>${statPair("Yellow Cards")}</span>Thẻ vàng</div>
+      <div class="detail-box"><span>${statPair("Red Cards")}</span>Thẻ đỏ</div>
+      <div class="detail-box"><span>${statPair("Fouls")}</span>Lỗi</div>
     </div>
     <p class="detail-note">Tỷ số, lịch và bảng đấu lấy từ API khi đã cấu hình key trên Netlify. Các thống kê nâng cao chỉ hiện khi provider trả dữ liệu đáng tin cậy.</p>
     <h4>${isFinished ? "Diễn biến ghi bàn" : "Thông tin trận đấu"}</h4>
     <div class="timeline">${goals}</div>
+  `;
+  document.querySelector("#matchDialog").showModal();
+  loadMatchDetail(matchId);
+}
+
+async function loadMatchDetail(matchId) {
+  if (location.protocol === "file:") return;
+  const match = matches.find((item) => String(item.id) === String(matchId));
+  if (!match || match.status === "upcoming" || match.detailLoaded) return;
+
+  try {
+    const response = await fetch(`/api/worldcup?fixture=${encodeURIComponent(matchId)}`, {
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const detail = await response.json();
+    if (detail.fallback) throw new Error(detail.apiError || detail.message || "No match detail");
+
+    Object.assign(match, detail, { detailLoaded: true });
+    openMatchDialog(matchId);
+  } catch (error) {
+    console.warn("Không tải được chi tiết trận từ API:", error);
+    match.detailLoaded = true;
+  }
+}
+
+function getScorers() {
+  if (scorers.length) return scorers;
+  const byName = new Map();
+
+  for (const match of matches) {
+    for (const event of match.events || []) {
+      if (event.type && event.type !== "goal") continue;
+      const text = String(event.text || "").trim();
+      const cleaned = text
+        .replace(/^\d+(\+\d+)?'\s*/, "")
+        .replace(/\s*\(.*?\)\s*/g, " ")
+        .replace(/\s+·.*$/, "")
+        .trim();
+      if (!cleaned) continue;
+      const count = /x(\d+)/i.exec(cleaned)?.[1] || 1;
+      const name = cleaned.replace(/\sx\d+$/i, "").replace(/^\d+,\s*/, "").trim();
+      if (!name) continue;
+      const current = byName.get(name) || { name, team: "", goals: 0, assists: 0, penalties: 0 };
+      current.goals += Number(count) || 1;
+      byName.set(name, current);
+    }
+  }
+
+  return [...byName.values()].sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name));
+}
+
+function openScorersDialog() {
+  const data = getScorers();
+  document.querySelector("#dialogContent").innerHTML = `
+    <div class="dialog-title">
+      <p class="eyebrow">Vua phá lưới</p>
+      <h3>Bảng xếp hạng cầu thủ ghi bàn</h3>
+      <p>Dữ liệu ưu tiên lấy từ API-FOOTBALL. Khi API chưa có, app tạm tính từ danh sách bàn thắng trong các trận đã đấu.</p>
+    </div>
+    <div class="scorers-table" style="display:grid;gap:10px">
+      ${data.length ? data.map((player, index) => `
+        <div class="scorer-row" style="display:grid;grid-template-columns:40px 1fr auto 52px;gap:12px;align-items:center;padding:12px;border:1px solid rgba(71,74,74,.14);border-radius:8px">
+          <strong>${player.rank || index + 1}</strong>
+          <span style="display:flex;align-items:center;gap:10px">${player.photo ? `<img src="${player.photo}" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover">` : ""}${player.name}</span>
+          <small>${player.team || "Đang cập nhật đội"}</small>
+          <b>${player.goals || 0}</b>
+        </div>
+      `).join("") : `<p>Chưa có dữ liệu cầu thủ ghi bàn từ API.</p>`}
+    </div>
   `;
   document.querySelector("#matchDialog").showModal();
 }
@@ -565,6 +643,10 @@ function openStatAction(action) {
     openTeamsDialog();
     return;
   }
+  if (action === "scorers") {
+    openScorersDialog();
+    return;
+  }
   switchView(action);
 }
 
@@ -573,11 +655,14 @@ async function refreshRemoteData({ silent = true } = {}) {
   if (!remoteData) return;
   teams = remoteData.teams;
   matches = remoteData.matches;
+  scorers = Array.isArray(remoteData.scorers) ? remoteData.scorers : [];
   renderGroupOptions();
   renderStats();
   render();
   if (!silent) showDataSource(remoteData);
 }
+
+document.querySelector("#goalCount")?.closest("[data-stat-action]")?.setAttribute("data-stat-action", "scorers");
 
 document.querySelectorAll(".tab-button").forEach((button) => {
   button.addEventListener("click", () => {

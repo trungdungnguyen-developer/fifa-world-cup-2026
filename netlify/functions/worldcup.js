@@ -7,7 +7,12 @@ const FALLBACK_CACHE_SECONDS = Number(process.env.API_FALLBACK_CACHE_SECONDS || 
 const AUTO_DISCOVER_LEAGUES = process.env.API_FOOTBALL_AUTO_DISCOVER === "true";
 const TRY_FALLBACK_LEAGUE_IDS = process.env.API_FOOTBALL_TRY_FALLBACK_IDS === "true";
 
-exports.handler = async () => {
+exports.handler = async (event = {}) => {
+  const fixtureId = event.queryStringParameters?.fixture;
+  if (fixtureId) {
+    return getFixtureDetailResponse(fixtureId);
+  }
+
   if (process.env.API_FOOTBALL_KEY) {
     try {
       const data = await getApiFootballData();
@@ -59,12 +64,33 @@ async function getApiFootballData() {
         updatedAt: new Date().toISOString(),
         teams: data.teams,
         matches: data.matches,
+        scorers: data.scorers,
         debug: { attempts }
       };
     }
   }
 
   throw new Error(`API-Football returned incomplete World Cup data. Tried league ids: ${candidateLeagueIds.join(", ")}`);
+}
+
+async function getFixtureDetailResponse(fixtureId) {
+  if (!process.env.API_FOOTBALL_KEY) {
+    return json({
+      fallback: true,
+      message: "Set API_FOOTBALL_KEY in Netlify environment variables to load match details."
+    }, 200, fallbackCacheControl());
+  }
+
+  try {
+    const detail = await getApiFootballFixtureDetail(fixtureId);
+    return json(detail, 200, shortCacheControl());
+  } catch (error) {
+    return json({
+      fallback: true,
+      message: "Could not load live match detail from API-FOOTBALL.",
+      apiError: error.message
+    }, 200, fallbackCacheControl());
+  }
 }
 
 async function getWorldCupLeagueCandidates() {
@@ -104,6 +130,7 @@ async function getApiFootballDataForLeague(leagueId) {
   } catch (error) {
     console.warn("Could not load API-FOOTBALL standings, deriving table from fixtures:", error);
   }
+  const scorers = await getApiFootballTopScorers(leagueId);
 
   const standings = standingsData?.response?.[0]?.league?.standings || [];
   let teams = standings.flatMap((groupRows) => groupRows.map((row) => {
@@ -147,11 +174,13 @@ async function getApiFootballDataForLeague(leagueId) {
   return {
     teams,
     matches,
+    scorers,
     debug: {
       leagueId,
       standingsGroups: standings.length,
       teams: teams.length,
-      matches: matches.length
+      matches: matches.length,
+      scorers: scorers.length
     }
   };
 }
@@ -231,6 +260,97 @@ function deriveTeamsFromMatches(fixtures) {
     if (gfCompare) return gfCompare;
     return a.name.localeCompare(b.name);
   });
+}
+
+async function getApiFootballTopScorers(leagueId) {
+  try {
+    const data = await apiFootball(`/players/topscorers?league=${leagueId}&season=${WORLD_CUP_SEASON}`);
+    return (data.response || []).map((item, index) => {
+      const goals = item.statistics?.[0]?.goals || {};
+      const games = item.statistics?.[0]?.games || {};
+      const team = item.statistics?.[0]?.team || {};
+      return {
+        rank: index + 1,
+        name: item.player?.name || "",
+        photo: item.player?.photo || "",
+        team: normalizeTeamName(team.name || ""),
+        teamLogo: team.logo || "",
+        goals: goals.total || 0,
+        assists: goals.assists || 0,
+        penalties: goals.penalty || 0,
+        minutes: games.minutes || 0
+      };
+    }).filter((player) => player.name);
+  } catch (error) {
+    console.warn("Could not load API-FOOTBALL top scorers:", error);
+    return [];
+  }
+}
+
+async function getApiFootballFixtureDetail(fixtureId) {
+  const [fixtureResult, eventsResult, statisticsResult] = await Promise.allSettled([
+    apiFootball(`/fixtures?id=${encodeURIComponent(fixtureId)}`),
+    apiFootball(`/fixtures/events?fixture=${encodeURIComponent(fixtureId)}`),
+    apiFootball(`/fixtures/statistics?fixture=${encodeURIComponent(fixtureId)}`)
+  ]);
+
+  if (fixtureResult.status === "rejected") throw fixtureResult.reason;
+  const item = fixtureResult.value.response?.[0];
+  if (!item) throw new Error(`Fixture ${fixtureId} was not found.`);
+
+  const status = normalizeApiFootballStatus(item.fixture?.status?.short);
+  const events = eventsResult.status === "fulfilled" ? normalizeFixtureEvents(eventsResult.value.response || []) : [];
+  const statistics = statisticsResult.status === "fulfilled" ? normalizeFixtureStatistics(statisticsResult.value.response || []) : {};
+
+  return {
+    id: item.fixture.id,
+    group: cleanGroupName(item.league?.round || item.league?.name || ""),
+    status,
+    date: item.fixture.date,
+    venue: [item.fixture.venue?.name, item.fixture.venue?.city].filter(Boolean).join(", "),
+    home: normalizeTeamName(item.teams?.home?.name),
+    away: normalizeTeamName(item.teams?.away?.name),
+    homeScore: status === "finished" || status === "live" ? item.goals?.home : undefined,
+    awayScore: status === "finished" || status === "live" ? item.goals?.away : undefined,
+    events,
+    statistics,
+    updatedAt: new Date().toISOString(),
+    source: "API-FOOTBALL / API-SPORTS match detail"
+  };
+}
+
+function normalizeFixtureEvents(events) {
+  return events.map((event) => ({
+    type: String(event.type || "").toLowerCase(),
+    detail: event.detail || "",
+    minute: [event.time?.elapsed, event.time?.extra ? `+${event.time.extra}` : ""].filter(Boolean).join(""),
+    team: normalizeTeamName(event.team?.name || ""),
+    player: event.player?.name || "",
+    assist: event.assist?.name || "",
+    text: formatEventText(event)
+  }));
+}
+
+function formatEventText(event) {
+  const minute = [event.time?.elapsed, event.time?.extra ? `+${event.time.extra}` : ""].filter(Boolean).join("");
+  const player = event.player?.name || "Unknown player";
+  const team = normalizeTeamName(event.team?.name || "");
+  const detail = event.detail ? ` · ${event.detail}` : "";
+  const assist = event.assist?.name ? ` · kiến tạo: ${event.assist.name}` : "";
+  return `${minute ? `${minute}' ` : ""}${player}${team ? ` (${team})` : ""}${detail}${assist}`;
+}
+
+function normalizeFixtureStatistics(rows) {
+  const result = {};
+  for (const row of rows) {
+    const teamName = normalizeTeamName(row.team?.name || "");
+    if (!teamName) continue;
+    result[teamName] = {};
+    for (const stat of row.statistics || []) {
+      result[teamName][stat.type] = stat.value ?? "";
+    }
+  }
+  return result;
 }
 
 async function apiFootball(path) {
@@ -346,6 +466,10 @@ function fallbackBody(primaryError, secondaryError) {
 
 function cacheControl() {
   return `public, max-age=300, s-maxage=${API_CACHE_SECONDS}, stale-while-revalidate=${API_STALE_SECONDS}`;
+}
+
+function shortCacheControl() {
+  return "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
 }
 
 function fallbackCacheControl() {

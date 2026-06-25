@@ -1,13 +1,35 @@
 const WORLD_CUP_LEAGUE_ID = process.env.API_FOOTBALL_LEAGUE_ID || "1";
 const WORLD_CUP_SEASON = process.env.API_FOOTBALL_SEASON || "2026";
 const WORLD_CUP_FALLBACK_LEAGUE_IDS = ["1", "37", "31", "33", "34", "30", "587", "927", "950", "1213"];
-const API_CACHE_SECONDS = Number(process.env.API_CACHE_SECONDS || 21600);
+const API_CACHE_SECONDS = process.env.API_CACHE_SECONDS ? Number(process.env.API_CACHE_SECONDS) : null;
+const API_ACTIVE_CACHE_SECONDS = Number(process.env.API_ACTIVE_CACHE_SECONDS || 1800);
+const API_IDLE_CACHE_SECONDS = Number(process.env.API_IDLE_CACHE_SECONDS || 21600);
+const API_DETAIL_CACHE_SECONDS = Number(process.env.API_DETAIL_CACHE_SECONDS || 1800);
 const API_STALE_SECONDS = Number(process.env.API_STALE_SECONDS || 86400);
 const FALLBACK_CACHE_SECONDS = Number(process.env.API_FALLBACK_CACHE_SECONDS || 3600);
 const AUTO_DISCOVER_LEAGUES = process.env.API_FOOTBALL_AUTO_DISCOVER === "true";
 const TRY_FALLBACK_LEAGUE_IDS = process.env.API_FOOTBALL_TRY_FALLBACK_IDS === "true";
+const NEWS_CACHE_SECONDS = Number(process.env.NEWS_CACHE_SECONDS || 3600);
+const NEWS_SOURCES = [
+  { name: "VnExpress", url: "https://vnexpress.net/rss/the-thao.rss" },
+  { name: "Tuổi Trẻ", url: "https://tuoitre.vn/rss/the-thao.rss" },
+  { name: "Thanh Niên", url: "https://thanhnien.vn/rss/the-thao.rss" },
+  { name: "VietnamNet", url: "https://vietnamnet.vn/rss/the-thao.rss" }
+];
+const NEWS_KEYWORDS = [
+  "world cup 2026",
+  "world cup",
+  "fifa",
+  "cúp thế giới",
+  "cup thế giới",
+  "cúp bóng đá thế giới"
+];
 
 exports.handler = async (event = {}) => {
+  if (event.queryStringParameters?.news) {
+    return getNewsResponse();
+  }
+
   const fixtureId = event.queryStringParameters?.fixture;
   if (fixtureId) {
     return getFixtureDetailResponse(fixtureId);
@@ -42,7 +64,7 @@ exports.handler = async (event = {}) => {
 
   return json({
     fallback: true,
-    source: "Fallback data in app.js",
+    source: "Live data unavailable",
     updatedAt: new Date().toISOString(),
     message: "Set API_FOOTBALL_KEY or FOOTBALL_DATA_TOKEN in Netlify environment variables.",
     teams: [],
@@ -71,6 +93,95 @@ async function getApiFootballData() {
   }
 
   throw new Error(`API-Football returned incomplete World Cup data. Tried league ids: ${candidateLeagueIds.join(", ")}`);
+}
+
+async function getNewsResponse() {
+  try {
+    const results = await Promise.allSettled(NEWS_SOURCES.map(loadNewsSource));
+    const articles = results
+      .flatMap((result) => result.status === "fulfilled" ? result.value : [])
+      .filter(isWorldCupNews)
+      .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+      .filter((article, index, list) => list.findIndex((item) => item.url === article.url) === index)
+      .slice(0, 24);
+
+    return json({
+      source: "RSS báo Việt Nam",
+      updatedAt: new Date().toISOString(),
+      articles
+    }, 200, newsCacheControl());
+  } catch (error) {
+    return json({
+      source: "RSS báo Việt Nam",
+      updatedAt: new Date().toISOString(),
+      articles: [],
+      message: error.message
+    }, 200, newsCacheControl());
+  }
+}
+
+async function loadNewsSource(source) {
+  const response = await fetch(source.url, {
+    headers: { "User-Agent": "WorldCup2026ScheduleApp/1.0" }
+  });
+  if (!response.ok) throw new Error(`${source.name} RSS ${response.status}`);
+  const xml = await response.text();
+  return parseRssItems(xml, source.name);
+}
+
+function parseRssItems(xml, sourceName) {
+  return [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((match) => {
+    const item = match[0];
+    const description = decodeXml(getTag(item, "description"));
+    return {
+      title: decodeXml(getTag(item, "title")),
+      url: decodeXml(getTag(item, "link")),
+      summary: stripHtml(description).slice(0, 220),
+      image: extractNewsImage(item, description),
+      source: sourceName,
+      publishedAt: new Date(decodeXml(getTag(item, "pubDate")) || Date.now()).toISOString()
+    };
+  }).filter((article) => article.title && article.url);
+}
+
+function getTag(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  return match ? match[1].replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "").trim() : "";
+}
+
+function extractNewsImage(itemXml, description) {
+  const media = itemXml.match(/<media:content[^>]+url=["']([^"']+)["']/i)
+    || itemXml.match(/<media:thumbnail[^>]+url=["']([^"']+)["']/i)
+    || itemXml.match(/<enclosure[^>]+url=["']([^"']+)["']/i);
+  if (media?.[1]) return decodeXml(media[1]);
+  const image = description.match(/<img[^>]+src=["']([^"']+)["']/i);
+  return image?.[1] ? decodeXml(image[1]) : "";
+}
+
+function isWorldCupNews(article) {
+  const haystack = normalizeText(`${article.title} ${article.summary}`);
+  return NEWS_KEYWORDS.some((keyword) => haystack.includes(normalizeText(keyword)));
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function stripHtml(value) {
+  return decodeXml(String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
+function decodeXml(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'");
 }
 
 async function getFixtureDetailResponse(fixtureId) {
@@ -455,9 +566,9 @@ function fallbackBody(primaryError, secondaryError) {
   const messages = [primaryError, secondaryError].filter(Boolean).map((error) => error.message);
   return {
     fallback: true,
-    source: "Fallback data in app.js",
+    source: "Live data unavailable",
     updatedAt: new Date().toISOString(),
-    message: "Live World Cup API is temporarily unavailable or has incomplete data. The app will use its local fallback data.",
+    message: "Live World Cup API is temporarily unavailable or has incomplete data. The app will not show unverified fallback scores.",
     apiError: messages.join(" | "),
     teams: [],
     matches: []
@@ -465,15 +576,32 @@ function fallbackBody(primaryError, secondaryError) {
 }
 
 function cacheControl() {
-  return `public, max-age=300, s-maxage=${API_CACHE_SECONDS}, stale-while-revalidate=${API_STALE_SECONDS}`;
+  const cacheSeconds = API_CACHE_SECONDS || timeAwareCacheSeconds();
+  return `public, max-age=300, s-maxage=${cacheSeconds}, stale-while-revalidate=${API_STALE_SECONDS}`;
 }
 
 function shortCacheControl() {
-  return "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
+  const cacheSeconds = API_CACHE_SECONDS || API_DETAIL_CACHE_SECONDS;
+  return `public, max-age=300, s-maxage=${cacheSeconds}, stale-while-revalidate=3600`;
 }
 
 function fallbackCacheControl() {
   return `public, max-age=300, s-maxage=${FALLBACK_CACHE_SECONDS}, stale-while-revalidate=${API_STALE_SECONDS}`;
+}
+
+function newsCacheControl() {
+  return `public, max-age=300, s-maxage=${NEWS_CACHE_SECONDS}, stale-while-revalidate=21600`;
+}
+
+function timeAwareCacheSeconds(now = new Date()) {
+  const vietnamHour = Number(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    hour12: false,
+    hourCycle: "h23"
+  }).format(now));
+
+  return vietnamHour >= 0 && vietnamHour < 9 ? API_ACTIVE_CACHE_SECONDS : API_IDLE_CACHE_SECONDS;
 }
 
 function json(body, statusCode, cacheHeader = cacheControl()) {

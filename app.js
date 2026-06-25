@@ -126,6 +126,7 @@ let matches = [
 
 const state = { view: "standings", group: "all", query: "" };
 let scorers = [];
+let newsArticles = [];
 const views = {
   standings: document.querySelector("#standingsView"),
   results: document.querySelector("#resultsView"),
@@ -196,7 +197,7 @@ function filteredMatches(status) {
 
 function getFinishedMatches() {
   return matches
-    .filter((match) => match.status === "finished")
+    .filter((match) => match.status === "finished" || isPastUnresolvedMatch(match))
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
@@ -205,6 +206,10 @@ function getUpcomingMatches() {
   return matches
     .filter((match) => match.status !== "finished" && new Date(match.date).getTime() > now)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+function isPastUnresolvedMatch(match) {
+  return match.status !== "finished" && new Date(match.date).getTime() <= Date.now();
 }
 
 function formatCountdown(targetDate) {
@@ -319,7 +324,8 @@ function render() {
   const counts = {
     standings: renderStandings(),
     results: renderResults(),
-    schedule: renderSchedule()
+    schedule: renderSchedule(),
+    news: renderNews()
   };
   Object.entries(views).forEach(([name, element]) => element.classList.toggle("active-view", name === state.view));
   document.querySelector("#viewKicker").textContent = titles[state.view][0];
@@ -401,16 +407,17 @@ function openMatchDialog(matchId) {
 function renderMatchCard(match) {
   const isFinished = match.status === "finished";
   const isLive = match.status === "live";
-  const cardClass = isFinished ? "past" : isLive ? "live-card" : "upcoming-card";
+  const isPendingResult = isPastUnresolvedMatch(match);
+  const cardClass = isFinished ? "past" : isLive ? "live-card" : isPendingResult ? "pending-card" : "upcoming-card";
   const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
-  const score = isFinished || isLive || hasScore ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "vs";
-  const statusText = isFinished ? "Đã kết thúc" : isLive ? "Đang diễn ra" : "Sắp diễn ra";
+  const score = isFinished || isLive || hasScore ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : isPendingResult ? "Đang cập nhật" : "vs";
+  const statusText = isFinished ? "Đã kết thúc" : isLive ? "Đang diễn ra" : isPendingResult ? "Chờ cập nhật tỷ số" : "Sắp diễn ra";
 
   return `
     <article class="match-card ${cardClass}" data-match-id="${match.id}" tabindex="0" role="button" aria-label="${isFinished ? "Xem kết quả" : "Xem lịch"} ${match.home} gặp ${match.away}">
       <div class="team home">${teamChip(match.home)}</div>
       <div class="score-block">
-        <span class="status-pill ${isFinished ? "finished" : isLive ? "live" : "upcoming"}">${statusText}</span>
+        <span class="status-pill ${isFinished ? "finished" : isLive ? "live" : isPendingResult ? "pending" : "upcoming"}">${statusText}</span>
         <span class="score">${score}</span>
         <span class="match-meta">Bảng ${match.group || "-"} · ${formatter.format(new Date(match.date))}</span>
         <span class="match-meta">${match.venue || "Đang cập nhật sân"}</span>
@@ -438,6 +445,27 @@ function renderSchedule() {
   return data.length;
 }
 
+function renderNews() {
+  const query = normalize(state.query);
+  const data = newsArticles.filter((article) => !query || normalize(`${article.title} ${article.summary} ${article.source}`).includes(query));
+  views.news.innerHTML = `
+    <div class="news-grid">
+      ${data.map((article) => `
+        <a class="news-card" href="${article.url}" target="_blank" rel="noopener">
+          ${article.image ? `<img src="${article.image}" alt="">` : `<div class="news-card-placeholder">World Cup 2026</div>`}
+          <div>
+            <span>${article.source || "Nguồn tin"}</span>
+            <h3>${article.title}</h3>
+            <p>${article.summary || "Mở bài viết gốc để xem đầy đủ nội dung."}</p>
+            <small>${article.publishedAt ? formatter.format(new Date(article.publishedAt)) : "Đang cập nhật thời gian"}</small>
+          </div>
+        </a>
+      `).join("")}
+    </div>
+  `;
+  return data.length;
+}
+
 function updateFeaturedMatch() {
   const featured = getUpcomingMatches()[0];
   const matchEl = document.querySelector("#featuredMatch");
@@ -446,7 +474,8 @@ function updateFeaturedMatch() {
 
   if (!featured) {
     const latest = getFinishedMatches()[0];
-    matchEl.textContent = latest ? `${latest.home} ${latest.homeScore} - ${latest.awayScore} ${latest.away}` : "Chưa có trận đấu";
+    const latestHasScore = latest && latest.homeScore !== undefined && latest.awayScore !== undefined;
+    matchEl.textContent = latest ? latestHasScore ? `${latest.home} ${latest.homeScore} - ${latest.awayScore} ${latest.away}` : `${latest.home} vs ${latest.away}` : "Chưa có trận đấu";
     metaEl.textContent = latest ? `Trận mới nhất · ${formatter.format(new Date(latest.date))}` : "Đang chờ dữ liệu từ API";
     countdownEl.textContent = "";
     return;
@@ -479,7 +508,7 @@ async function loadRemoteData() {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const data = await response.json();
 
-    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 12) {
+    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 2 || !data.matches.length) {
       throw new Error(data.message || data.apiError || "API data is incomplete");
     }
 
@@ -525,6 +554,7 @@ function openMatchDialog(matchId) {
 
   const isFinished = match.status === "finished";
   const isLive = match.status === "live";
+  const isPendingResult = isPastUnresolvedMatch(match);
   const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
   const homeStats = match.statistics?.[match.home] || {};
   const awayStats = match.statistics?.[match.away] || {};
@@ -539,10 +569,10 @@ function openMatchDialog(matchId) {
 
   document.querySelector("#dialogContent").innerHTML = `
     <div class="dialog-title">
-      <p class="eyebrow">${isFinished ? "Kết quả trận đấu" : isLive ? "Đang diễn ra" : "Lịch thi đấu"} · Bảng ${match.group || "-"}</p>
+      <p class="eyebrow">${isFinished ? "Kết quả trận đấu" : isLive ? "Đang diễn ra" : isPendingResult ? "Chờ cập nhật tỷ số" : "Lịch thi đấu"} · Bảng ${match.group || "-"}</p>
       <h3>${title}</h3>
       <p>${formatter.format(new Date(match.date))} · ${match.venue || "Đang cập nhật sân"}</p>
-      ${!isFinished && !isLive ? `<p class="countdown-text">${formatCountdown(match.date)}</p>` : ""}
+      ${!isFinished && !isLive && !isPendingResult ? `<p class="countdown-text">${formatCountdown(match.date)}</p>` : ""}
     </div>
     <div class="detail-grid">
       <div class="detail-box"><span>${isFinished || isLive || hasScore ? `${match.homeScore ?? 0} - ${match.awayScore ?? 0}` : "VS"}</span>Tỷ số</div>
@@ -565,7 +595,7 @@ function openMatchDialog(matchId) {
 async function loadMatchDetail(matchId) {
   if (location.protocol === "file:") return;
   const match = matches.find((item) => String(item.id) === String(matchId));
-  if (!match || match.status === "upcoming" || match.detailLoaded) return;
+  if (!match || (match.status === "upcoming" && !isPastUnresolvedMatch(match)) || match.detailLoaded) return;
 
   try {
     const response = await fetch(`/api/worldcup?fixture=${encodeURIComponent(matchId)}`, {
@@ -584,30 +614,9 @@ async function loadMatchDetail(matchId) {
 }
 
 function getScorers() {
-  if (scorers.length) return scorers;
-  const byName = new Map();
-
-  for (const match of matches) {
-    for (const event of match.events || []) {
-      if (event.type && event.type !== "goal") continue;
-      const text = String(event.text || "").trim();
-      const cleaned = text
-        .replace(/^\d+(\+\d+)?'\s*/, "")
-        .replace(/\s*\(.*?\)\s*/g, " ")
-        .replace(/\s+·.*$/, "")
-        .trim();
-      if (!cleaned) continue;
-      const count = /x(\d+)/i.exec(cleaned)?.[1] || 1;
-      const name = cleaned.replace(/\sx\d+$/i, "").replace(/^\d+,\s*/, "").trim();
-      if (!name) continue;
-      const current = byName.get(name) || { name, team: "", goals: 0, assists: 0, penalties: 0 };
-      current.goals += Number(count) || 1;
-      byName.set(name, current);
-    }
-  }
-
-  return [...byName.values()].sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name));
+  return [...scorers].sort((a, b) => Number(b.goals || 0) - Number(a.goals || 0) || a.name.localeCompare(b.name));
 }
+
 
 function openScorersDialog() {
   const data = getScorers();
@@ -615,7 +624,7 @@ function openScorersDialog() {
     <div class="dialog-title">
       <p class="eyebrow">Vua phá lưới</p>
       <h3>Bảng xếp hạng cầu thủ ghi bàn</h3>
-      <p>Dữ liệu ưu tiên lấy từ API-FOOTBALL. Khi API chưa có, app tạm tính từ danh sách bàn thắng trong các trận đã đấu.</p>
+      <p>Dữ liệu chỉ lấy từ API-FOOTBALL. App không tự tính từ dữ liệu mẫu để tránh hiển thị sai.</p>
     </div>
     <div class="scorers-table" style="display:grid;gap:10px">
       ${data.length ? data.map((player, index) => `
@@ -625,7 +634,7 @@ function openScorersDialog() {
           <small>${player.team || "Đang cập nhật đội"}</small>
           <b>${player.goals || 0}</b>
         </div>
-      `).join("") : `<p>Chưa có dữ liệu cầu thủ ghi bàn từ API.</p>`}
+      `).join("") : `<p>Chưa có dữ liệu vua phá lưới hợp lệ từ API-FOOTBALL. App không hiển thị bảng ghi bàn dự phòng để tránh sai lệch.</p>`}
     </div>
   `;
   document.querySelector("#matchDialog").showModal();
@@ -649,6 +658,103 @@ function openStatAction(action) {
   }
   switchView(action);
 }
+
+function liveUnavailableData(message = "API live chưa trả dữ liệu hợp lệ.") {
+  return {
+    teams: [],
+    matches: [],
+    scorers: [],
+    source: "Chưa có dữ liệu live từ API uy tín",
+    updatedAt: new Date().toISOString(),
+    unavailable: true,
+    message
+  };
+}
+
+async function loadRemoteData() {
+  if (location.protocol === "file:") {
+    return liveUnavailableData("Bản mở bằng file cục bộ không gọi được Netlify Function.");
+  }
+
+  try {
+    lastRemoteFetchAt = Date.now();
+    const response = await fetch("/api/worldcup", {
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const data = await response.json();
+
+    if (data.fallback || !Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 2 || !data.matches.length) {
+      throw new Error(data.message || data.apiError || "API data is incomplete");
+    }
+
+    return data;
+  } catch (error) {
+    console.warn("Live World Cup API failed:", error);
+    return liveUnavailableData(error.message);
+  }
+}
+
+function showDataSource(data) {
+  const note = document.querySelector(".note p");
+  if (!note) return;
+  const updated = data.updatedAt ? formatter.format(new Date(data.updatedAt)) : "không rõ thời điểm";
+  note.textContent = data.unavailable
+    ? `Nguồn dữ liệu: ${data.source}. Cập nhật: ${updated}. ${data.message} App không hiển thị tỷ số hoặc bảng xếp hạng dự phòng cũ.`
+    : `Nguồn dữ liệu: ${data.source || "API"} · Cập nhật: ${updated}. Dữ liệu được lấy từ API đã cấu hình và tự cập nhật theo cache Netlify.`;
+}
+
+function setupNewsView() {
+  const scheduleButton = document.querySelector('[data-view="schedule"]');
+  const newsButton = document.createElement("button");
+  newsButton.className = "tab-button";
+  newsButton.dataset.view = "news";
+  newsButton.textContent = "Tin tức";
+  scheduleButton?.after(newsButton);
+
+  const newsView = document.createElement("div");
+  newsView.id = "newsView";
+  newsView.className = "view";
+  document.querySelector("#emptyState")?.before(newsView);
+  views.news = newsView;
+  titles.news = ["Tin mới từ báo Việt Nam", "Tin tức World Cup 2026"];
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .news-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+    .news-card{display:grid;grid-template-rows:160px 1fr;overflow:hidden;border:1px solid rgba(71,74,74,.14);border-radius:8px;background:#fff;color:inherit;text-decoration:none;box-shadow:none;transition:.2s ease}
+    .news-card:hover{border-color:rgba(42,57,141,.45);transform:translateY(-1px)}
+    .news-card img,.news-card-placeholder{width:100%;height:160px;object-fit:cover;background:#d1d4d1}
+    .news-card-placeholder{display:grid;place-items:center;color:#2a398d;font-weight:800}
+    .news-card div:last-child{padding:14px}
+    .news-card span{color:#3cac3b;font-size:12px;font-weight:800;text-transform:uppercase}
+    .news-card h3{margin:8px 0;color:#2a398d;font-size:18px;line-height:1.3}
+    .news-card p{margin:0 0 10px;color:#474a4a;line-height:1.55}
+    .news-card small{color:#687070}
+  `;
+  document.head.append(style);
+}
+
+async function refreshNewsData() {
+  if (location.protocol === "file:") {
+    newsArticles = [];
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/worldcup?news=1", {
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) throw new Error(`News API ${response.status}`);
+    const data = await response.json();
+    newsArticles = Array.isArray(data.articles) ? data.articles : [];
+  } catch (error) {
+    console.warn("Không tải được tin tức World Cup:", error);
+    newsArticles = [];
+  }
+}
+
+setupNewsView();
 
 async function refreshRemoteData({ silent = true } = {}) {
   const remoteData = await loadRemoteData();
@@ -700,7 +806,10 @@ document.addEventListener("keydown", (event) => {
 document.querySelector(".close-dialog").addEventListener("click", () => document.querySelector("#matchDialog").close());
 
 async function initApp() {
-  await refreshRemoteData({ silent: false });
+  await Promise.all([
+    refreshRemoteData({ silent: false }),
+    refreshNewsData()
+  ]);
   renderGroupOptions();
   renderStats();
   render();
@@ -709,7 +818,10 @@ async function initApp() {
   countdownTimer = setInterval(updateFeaturedMatch, 1000);
 
   clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => refreshRemoteData(), REFRESH_INTERVAL_MS);
+  refreshTimer = setInterval(async () => {
+    await Promise.all([refreshRemoteData(), refreshNewsData()]);
+    if (state.view === "news") render();
+  }, REFRESH_INTERVAL_MS);
 }
 
 initApp();

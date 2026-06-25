@@ -16,9 +16,18 @@ const NEWS_SOURCES = [
   { name: "Thanh Niên", url: "https://thanhnien.vn/rss/the-thao.rss" },
   { name: "VietnamNet", url: "https://vietnamnet.vn/rss/the-thao.rss" }
 ];
+const NEWS_SEARCH_SOURCES = [
+  { name: "VnExpress", url: "https://news.google.com/rss/search?q=World%20Cup%202026%20site%3Avnexpress.net&hl=vi&gl=VN&ceid=VN%3Avi" },
+  { name: "Tuoi Tre", url: "https://news.google.com/rss/search?q=World%20Cup%202026%20site%3Atuoitre.vn&hl=vi&gl=VN&ceid=VN%3Avi" },
+  { name: "Thanh Nien", url: "https://news.google.com/rss/search?q=World%20Cup%202026%20site%3Athanhnien.vn&hl=vi&gl=VN&ceid=VN%3Avi" },
+  { name: "VietnamNet", url: "https://news.google.com/rss/search?q=World%20Cup%202026%20site%3Avietnamnet.vn&hl=vi&gl=VN&ceid=VN%3Avi" }
+];
 const NEWS_KEYWORDS = [
   "world cup 2026",
+  "world cup 26",
+  "fifa world cup 2026",
   "world cup",
+  "wc 2026",
   "fifa",
   "cúp thế giới",
   "cup thế giới",
@@ -105,10 +114,15 @@ async function getNewsResponse() {
       .filter((article, index, list) => list.findIndex((item) => item.url === article.url) === index)
       .slice(0, 24);
 
+    if (!articles.length) {
+      articles.push(...await collectNewsArticles(NEWS_SEARCH_SOURCES));
+    }
+
     return json({
       source: "RSS báo Việt Nam",
       updatedAt: new Date().toISOString(),
-      articles
+      articles,
+      message: articles.length ? "" : "Chua tim thay bai World Cup 2026 phu hop trong cac nguon tin dang theo doi."
     }, 200, newsCacheControl());
   } catch (error) {
     return json({
@@ -118,6 +132,16 @@ async function getNewsResponse() {
       message: error.message
     }, 200, newsCacheControl());
   }
+}
+
+async function collectNewsArticles(sources) {
+  const results = await Promise.allSettled(sources.map(loadNewsSource));
+  return results
+    .flatMap((result) => result.status === "fulfilled" ? result.value : [])
+    .filter(isWorldCupNews)
+    .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+    .filter((article, index, list) => list.findIndex((item) => item.url === article.url) === index)
+    .slice(0, 24);
 }
 
 async function loadNewsSource(source) {
@@ -266,6 +290,7 @@ async function getApiFootballDataForLeague(leagueId) {
     const status = normalizeApiFootballStatus(item.fixture.status?.short);
     return {
       id: item.fixture.id,
+      apiFixtureId: item.fixture.id,
       group: cleanGroupName(item.league.round || item.league.name || ""),
       status,
       date: item.fixture.date,
@@ -415,6 +440,7 @@ async function getApiFootballFixtureDetail(fixtureId) {
 
   return {
     id: item.fixture.id,
+    apiFixtureId: item.fixture.id,
     group: cleanGroupName(item.league?.round || item.league?.name || ""),
     status,
     date: item.fixture.date,

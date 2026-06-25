@@ -94,16 +94,16 @@ let matches = [
   result(42, "K", "2026-06-17T20:00:00-06:00", "Estadio Azteca, Mexico City", "Uzbekistan", "Colombia", 1, 3, ["60' Abbosbek Fayzullaev", "40' Daniel Muñoz", "65' Luis Díaz", "90+9' Jaminton Campaz"]),
   result(43, "L", "2026-06-17T15:00:00-05:00", "AT&T Stadium, Dallas", "Anh", "Croatia", 4, 2, ["12', 42' Harry Kane", "47' Jude Bellingham", "85' Marcus Rashford", "36' Martin Baturina", "45+5' Petar Musa"]),
   result(44, "L", "2026-06-17T19:00:00-04:00", "BMO Field, Toronto", "Ghana", "Panama", 1, 0, ["90+5' Kwame Yirenkyi"]),
-  upcoming(45, "K", "2026-06-23T12:00:00-05:00", "NRG Stadium, Houston", "Bồ Đào Nha", "Uzbekistan"),
-  upcoming(46, "L", "2026-06-23T16:00:00-04:00", "Gillette Stadium, Boston", "Anh", "Ghana"),
-  upcoming(47, "L", "2026-06-23T19:00:00-04:00", "BMO Field, Toronto", "Panama", "Croatia"),
-  upcoming(48, "K", "2026-06-23T20:00:00-06:00", "Estadio Akron, Guadalajara", "Colombia", "DR Congo"),
-  upcoming(49, "C", "2026-06-24T18:00:00-04:00", "Hard Rock Stadium, Miami", "Scotland", "Brazil"),
-  upcoming(50, "C", "2026-06-24T18:00:00-04:00", "Mercedes-Benz Stadium, Atlanta", "Ma Rốc", "Haiti"),
-  upcoming(51, "B", "2026-06-24T12:00:00-07:00", "BC Place, Vancouver", "Thụy Sĩ", "Canada"),
-  upcoming(52, "B", "2026-06-24T12:00:00-07:00", "Lumen Field, Seattle", "Bosnia và Herzegovina", "Qatar"),
-  upcoming(53, "A", "2026-06-24T19:00:00-06:00", "Estadio Azteca, Mexico City", "Czechia", "Mexico"),
-  upcoming(54, "A", "2026-06-24T19:00:00-06:00", "Estadio BBVA, Monterrey", "Nam Phi", "Hàn Quốc"),
+  result(45, "K", "2026-06-23T12:00:00-05:00", "NRG Stadium, Houston", "Bồ Đào Nha", "Uzbekistan", 5, 0, ["Cristiano Ronaldo x2", "Nuno Mendes", "João Félix", "Rafael Leão"]),
+  result(46, "L", "2026-06-23T16:00:00-04:00", "Gillette Stadium, Boston", "Anh", "Ghana", 0, 0, []),
+  result(47, "L", "2026-06-23T19:00:00-04:00", "BMO Field, Toronto", "Panama", "Croatia", 0, 1, ["Ante Budimir"]),
+  result(48, "K", "2026-06-23T20:00:00-06:00", "Estadio Akron, Guadalajara", "Colombia", "DR Congo", 1, 0, ["76' Daniel Muñoz"]),
+  result(49, "C", "2026-06-24T18:00:00-04:00", "Hard Rock Stadium, Miami", "Scotland", "Brazil", 0, 3, []),
+  result(50, "C", "2026-06-24T18:00:00-04:00", "Mercedes-Benz Stadium, Atlanta", "Ma Rốc", "Haiti", 4, 2, ["Achraf Hakimi", "Ismael Saibari", "Soufiane Rahimi", "Yassine", "Lenny Joseph", "Wilson Isidor"]),
+  result(51, "B", "2026-06-24T12:00:00-07:00", "BC Place, Vancouver", "Thụy Sĩ", "Canada", 2, 1, ["Ruben Vargas", "Johan Manzambi", "Promise David"]),
+  result(52, "B", "2026-06-24T12:00:00-07:00", "Lumen Field, Seattle", "Bosnia và Herzegovina", "Qatar", 3, 1, ["Kerim Alajbegović", "Albrake (phản lưới)", "Ermin Mahmić", "Hassan Al Haydos"]),
+  result(53, "A", "2026-06-24T19:00:00-06:00", "Estadio Azteca, Mexico City", "Czechia", "Mexico", 0, 2, ["54' Mateo Chávez", "61' Julián Quiñones"]),
+  result(54, "A", "2026-06-24T19:00:00-06:00", "Estadio BBVA, Monterrey", "Nam Phi", "Hàn Quốc", 1, 0, ["63' Thapelo Maseko"]),
   upcoming(55, "E", "2026-06-25T16:00:00-04:00", "Lincoln Financial Field, Philadelphia", "Curaçao", "Bờ Biển Ngà"),
   upcoming(56, "E", "2026-06-25T16:00:00-04:00", "MetLife Stadium, New York/New Jersey", "Ecuador", "Đức"),
   upcoming(57, "F", "2026-06-25T18:00:00-05:00", "AT&T Stadium, Dallas", "Nhật Bản", "Thụy Điển"),
@@ -127,6 +127,7 @@ let matches = [
 const state = { view: "standings", group: "all", query: "" };
 let scorers = [];
 let newsArticles = [];
+let newsMessage = "";
 const views = {
   standings: document.querySelector("#standingsView"),
   results: document.querySelector("#resultsView"),
@@ -156,6 +157,134 @@ function result(id, group, date, venue, home, away, homeScore, awayScore, events
 
 function upcoming(id, group, date, venue, home, away) {
   return { id, group, status: "upcoming", date, venue, home, away };
+}
+
+function canonicalTeamName(name) {
+  const normalized = normalize(String(name || ""))
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const aliases = {
+    "usa": "hoa ky",
+    "united states": "hoa ky",
+    "korea republic": "han quoc",
+    "south korea": "han quoc",
+    "cote d ivoire": "bo bien nga",
+    "ivory coast": "bo bien nga",
+    "germany": "duc",
+    "japan": "nhat ban",
+    "netherlands": "ha lan",
+    "spain": "tay ban nha",
+    "france": "phap",
+    "portugal": "bo dao nha",
+    "switzerland": "thuy si",
+    "austria": "ao",
+    "south africa": "nam phi",
+    "morocco": "ma roc",
+    "belgium": "bi",
+    "egypt": "ai cap",
+    "saudi arabia": "a rap xe ut"
+  };
+  return aliases[normalized] || normalized;
+}
+
+function matchDateKey(date) {
+  const value = new Date(date);
+  return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+}
+
+function isSameFixture(left, right) {
+  const sameTeams = canonicalTeamName(left.home) === canonicalTeamName(right.home)
+    && canonicalTeamName(left.away) === canonicalTeamName(right.away);
+  return sameTeams && matchDateKey(left.date) === matchDateKey(right.date);
+}
+
+function mergeLiveMatches(localMatches, remoteMatches) {
+  const merged = localMatches.map((match) => ({ ...match }));
+
+  for (const remote of remoteMatches || []) {
+    const index = merged.findIndex((local) => isSameFixture(local, remote));
+    const hasScore = remote.homeScore !== undefined && remote.awayScore !== undefined;
+    const patch = {
+      ...remote,
+      apiFixtureId: remote.apiFixtureId || remote.id,
+      status: hasScore && remote.status !== "live" ? "finished" : remote.status
+    };
+
+    if (index >= 0) {
+      merged[index] = {
+        ...merged[index],
+        ...patch,
+        id: merged[index].id,
+        group: merged[index].group || patch.group,
+        date: merged[index].date || patch.date,
+        venue: patch.venue || merged[index].venue,
+        home: merged[index].home,
+        away: merged[index].away
+      };
+    } else {
+      merged.push(patch);
+    }
+  }
+
+  return merged;
+}
+
+function mergeLiveTeams(localTeams, remoteTeams) {
+  if (Array.isArray(remoteTeams) && remoteTeams.length >= localTeams.length) {
+    return remoteTeams;
+  }
+
+  const byName = new Map(localTeams.map((team) => [canonicalTeamName(team.name), { ...team }]));
+  for (const remote of remoteTeams || []) {
+    const key = canonicalTeamName(remote.name);
+    byName.set(key, { ...(byName.get(key) || {}), ...remote });
+  }
+  return [...byName.values()];
+}
+
+function syncTeamStatsFromMatches() {
+  const byName = new Map(teams.map((team) => {
+    team.played = 0;
+    team.won = 0;
+    team.drawn = 0;
+    team.lost = 0;
+    team.gf = 0;
+    team.ga = 0;
+    team.points = 0;
+    return [team.name, team];
+  }));
+
+  for (const match of matches) {
+    if (match.status !== "finished" || match.homeScore === undefined || match.awayScore === undefined) continue;
+    const home = byName.get(match.home);
+    const away = byName.get(match.away);
+    if (!home || !away) continue;
+    const homeScore = Number(match.homeScore);
+    const awayScore = Number(match.awayScore);
+    if (Number.isNaN(homeScore) || Number.isNaN(awayScore)) continue;
+
+    home.played += 1;
+    away.played += 1;
+    home.gf += homeScore;
+    home.ga += awayScore;
+    away.gf += awayScore;
+    away.ga += homeScore;
+
+    if (homeScore > awayScore) {
+      home.won += 1;
+      home.points += 3;
+      away.lost += 1;
+    } else if (homeScore < awayScore) {
+      away.won += 1;
+      away.points += 3;
+      home.lost += 1;
+    } else {
+      home.drawn += 1;
+      away.drawn += 1;
+      home.points += 1;
+      away.points += 1;
+    }
+  }
 }
 
 function getTeam(name) {
@@ -230,6 +359,7 @@ function sortStandings(a, b) {
 }
 
 function renderStandings() {
+  syncTeamStatsFromMatches();
   const grouped = filteredTeams().reduce((acc, team) => {
     acc[team.group] ||= [];
     acc[team.group].push(team);
@@ -331,7 +461,8 @@ function render() {
   document.querySelector("#viewKicker").textContent = titles[state.view][0];
   document.querySelector("#viewTitle").textContent = titles[state.view][1];
   document.querySelector("#resultCount").textContent = `${counts[state.view]} mục`;
-  document.querySelector("#emptyState").hidden = counts[state.view] > 0;
+  const hasVisibleContent = counts[state.view] > 0 || (state.view === "news" && newsMessage);
+  document.querySelector("#emptyState").hidden = hasVisibleContent;
 }
 
 function renderGroupOptions() {
@@ -449,6 +580,7 @@ function renderNews() {
   const query = normalize(state.query);
   const data = newsArticles.filter((article) => !query || normalize(`${article.title} ${article.summary} ${article.source}`).includes(query));
   views.news.innerHTML = `
+    ${!data.length && newsMessage ? `<div class="news-empty-state">${newsMessage}</div>` : ""}
     <div class="news-grid">
       ${data.map((article) => `
         <a class="news-card" href="${article.url}" target="_blank" rel="noopener">
@@ -487,6 +619,7 @@ function updateFeaturedMatch() {
 }
 
 function renderStats() {
+  syncTeamStatsFromMatches();
   const played = getFinishedMatches();
   const upcoming = getUpcomingMatches();
   const goals = played.reduce((total, match) => total + Number(match.homeScore || 0) + Number(match.awayScore || 0), 0);
@@ -598,7 +731,8 @@ async function loadMatchDetail(matchId) {
   if (!match || (match.status === "upcoming" && !isPastUnresolvedMatch(match)) || match.detailLoaded) return;
 
   try {
-    const response = await fetch(`/api/worldcup?fixture=${encodeURIComponent(matchId)}`, {
+    const fixtureId = match.apiFixtureId || match.id;
+    const response = await fetch(`/api/worldcup?fixture=${encodeURIComponent(fixtureId)}`, {
       headers: { Accept: "application/json" }
     });
     if (!response.ok) throw new Error(`API ${response.status}`);
@@ -700,7 +834,7 @@ function showDataSource(data) {
   if (!note) return;
   const updated = data.updatedAt ? formatter.format(new Date(data.updatedAt)) : "không rõ thời điểm";
   note.textContent = data.unavailable
-    ? `Nguồn dữ liệu: ${data.source}. Cập nhật: ${updated}. ${data.message} App không hiển thị tỷ số hoặc bảng xếp hạng dự phòng cũ.`
+    ? `Nguồn dữ liệu: ${data.source}. Cập nhật: ${updated}. ${data.message} App đang giữ dữ liệu có sẵn để giao diện không bị trống; dữ liệu này chưa phải dữ liệu live.`
     : `Nguồn dữ liệu: ${data.source || "API"} · Cập nhật: ${updated}. Dữ liệu được lấy từ API đã cấu hình và tự cập nhật theo cache Netlify.`;
 }
 
@@ -731,6 +865,7 @@ function setupNewsView() {
     .news-card h3{margin:8px 0;color:#2a398d;font-size:18px;line-height:1.3}
     .news-card p{margin:0 0 10px;color:#474a4a;line-height:1.55}
     .news-card small{color:#687070}
+    .news-empty-state{margin-bottom:16px;padding:18px;border:1px dashed rgba(42,57,141,.35);border-radius:8px;color:#474a4a;line-height:1.55;background:#fff}
   `;
   document.head.append(style);
 }
@@ -738,6 +873,7 @@ function setupNewsView() {
 async function refreshNewsData() {
   if (location.protocol === "file:") {
     newsArticles = [];
+    newsMessage = "Tin tức cần Netlify Function để tải RSS từ các báo. Bạn đang mở app bằng file cục bộ nên trình duyệt không gọi được /api/worldcup?news=1. Hãy xem trên domain Netlify hoặc chạy Netlify Dev để tab Tin tức tự cập nhật.";
     return;
   }
 
@@ -748,9 +884,11 @@ async function refreshNewsData() {
     if (!response.ok) throw new Error(`News API ${response.status}`);
     const data = await response.json();
     newsArticles = Array.isArray(data.articles) ? data.articles : [];
+    newsMessage = newsArticles.length ? "" : (data.message || "Chưa có bài World Cup 2026 phù hợp trong các RSS đang theo dõi. App sẽ tự kiểm tra lại theo cache Netlify.");
   } catch (error) {
     console.warn("Không tải được tin tức World Cup:", error);
     newsArticles = [];
+    newsMessage = "Không tải được tin tức lúc này. Có thể RSS báo đang chặn request tạm thời hoặc Netlify Function chưa deploy bản mới.";
   }
 }
 
@@ -759,8 +897,16 @@ setupNewsView();
 async function refreshRemoteData({ silent = true } = {}) {
   const remoteData = await loadRemoteData();
   if (!remoteData) return;
-  teams = remoteData.teams;
-  matches = remoteData.matches;
+  if (remoteData.unavailable) {
+    scorers = [];
+    renderGroupOptions();
+    renderStats();
+    render();
+    showDataSource(remoteData);
+    return;
+  }
+  teams = mergeLiveTeams(teams, remoteData.teams);
+  matches = mergeLiveMatches(matches, remoteData.matches);
   scorers = Array.isArray(remoteData.scorers) ? remoteData.scorers : [];
   renderGroupOptions();
   renderStats();

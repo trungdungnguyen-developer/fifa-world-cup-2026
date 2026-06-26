@@ -535,6 +535,7 @@ async function getEspnScoreboardData() {
     .filter(Boolean)
     .filter((match, index, list) => list.findIndex((item) => String(item.apiFixtureId) === String(match.apiFixtureId)) === index)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
+  await addEspnGoalEvents(matches);
 
   if (!matches.length) throw new Error("ESPN scoreboard returned no World Cup matches.");
 
@@ -545,6 +546,46 @@ async function getEspnScoreboardData() {
     matches,
     scorers: []
   };
+}
+
+async function addEspnGoalEvents(matches) {
+  const finishedMatches = matches.filter((match) => match.status === "finished").slice(-24);
+  const results = await Promise.allSettled(finishedMatches.map(async (match) => {
+    const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${encodeURIComponent(match.apiFixtureId)}`, {
+      headers: { "User-Agent": "WorldCup2026ScheduleApp/1.0" }
+    });
+    if (!response.ok) throw new Error(`ESPN summary ${response.status}`);
+    const data = await response.json();
+    match.events = normalizeEspnGoalEvents(data.keyEvents || []);
+  }));
+
+  const failed = results.filter((result) => result.status === "rejected").length;
+  if (failed) console.warn(`Could not load ESPN goal events for ${failed} matches.`);
+}
+
+function normalizeEspnGoalEvents(events) {
+  return events
+    .filter((event) => event.scoringPlay)
+    .map((event) => {
+      const player = event.participants?.[0]?.athlete?.displayName || extractEspnGoalPlayer(event.text);
+      const team = normalizeTeamName(event.team?.displayName || "");
+      const minute = event.clock?.displayValue || "";
+      return {
+        type: "goal",
+        detail: event.type?.text || "Goal",
+        minute,
+        team,
+        player,
+        assist: event.participants?.[1]?.athlete?.displayName || "",
+        text: `${minute ? `${minute} ` : ""}${player}${team ? ` (${team})` : ""}`
+      };
+    })
+    .filter((event) => event.player);
+}
+
+function extractEspnGoalPlayer(text) {
+  const match = String(text || "").match(/\.\s*([^.(]+)\s*\(/);
+  return match ? match[1].trim() : "";
 }
 
 function getEspnDateWindow(now = new Date()) {

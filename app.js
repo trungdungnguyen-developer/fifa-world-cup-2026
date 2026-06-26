@@ -776,6 +776,95 @@ function openScorersDialog() {
   document.querySelector("#matchDialog").showModal();
 }
 
+function parseGoalScorer(event, match) {
+  const text = String(event?.text || "");
+  const normalizedText = normalize(`${text} ${event?.detail || ""}`);
+  if (!text || normalizedText.includes("phan luoi") || normalizedText.includes("own goal")) return null;
+
+  const minuteCount = (text.match(/\d{1,3}(?:\+\d+)?'/g) || []).length;
+  const explicitCount = text.match(/\bx\s*(\d+)\b/i) || text.match(/\bx(\d+)\b/i);
+  const goals = explicitCount ? Number(explicitCount[1]) : Math.max(1, minuteCount || 1);
+  const teamFromText = text.match(/\(([^)]+)\)/)?.[1] || "";
+  const cleanTeam = /pen|phan luoi|own goal/i.test(normalize(teamFromText)) ? "" : teamFromText;
+  const team = event?.team || cleanTeam || "";
+  const name = event?.player || text
+    .replace(/\d{1,3}(?:\+\d+)?'?,?\s*/g, "")
+    .replace(/\bx\s*\d+\b/ig, "")
+    .replace(/\([^)]*\)/g, "")
+    .replace(/·.*$/g, "")
+    .trim();
+
+  return name ? { name, team, goals, sourceMatch: `${match.home} - ${match.away}` } : null;
+}
+
+function deriveScorersFromMatches() {
+  const byPlayer = new Map();
+
+  for (const match of getFinishedMatches()) {
+    for (const event of match.events || []) {
+      const parsed = parseGoalScorer(event, match);
+      if (!parsed) continue;
+      const key = `${normalize(parsed.name)}|${normalize(parsed.team)}`;
+      const current = byPlayer.get(key) || {
+        name: parsed.name,
+        team: parsed.team,
+        goals: 0,
+        source: "match-events"
+      };
+      current.goals += parsed.goals;
+      if (!current.team && parsed.team) current.team = parsed.team;
+      byPlayer.set(key, current);
+    }
+  }
+
+  return [...byPlayer.values()]
+    .sort((a, b) => Number(b.goals || 0) - Number(a.goals || 0) || a.name.localeCompare(b.name, "vi"))
+    .map((player, index) => ({ ...player, rank: index + 1 }));
+}
+
+function getScorers() {
+  const apiScorers = Array.isArray(scorers) ? scorers.filter((player) => player.name && Number(player.goals || 0) > 0) : [];
+  const data = apiScorers.length ? apiScorers : deriveScorersFromMatches();
+  return data.sort((a, b) => Number(b.goals || 0) - Number(a.goals || 0) || a.name.localeCompare(b.name, "vi"));
+}
+
+function renderScorerAvatar(player) {
+  if (player.photo) return `<img src="${player.photo}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover">`;
+  return `<span style="width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:#d1d4d1;color:#2a398d;font-weight:800">${player.name.slice(0, 1).toUpperCase()}</span>`;
+}
+
+function renderScorerTeam(player) {
+  const team = player.team ? getTeam(player.team) : null;
+  const flag = team?.logo
+    ? `<img src="${team.logo}" alt="" style="width:18px;height:18px;border-radius:50%;object-fit:cover">`
+    : team?.flag
+    ? `<img src="https://flagcdn.com/w40/${team.flag}.png" alt="" style="width:18px;height:18px;border-radius:50%;object-fit:cover">`
+    : "";
+  return `<small style="display:flex;align-items:center;gap:6px;color:#687070">${flag}${player.team || "Đang cập nhật đội"}</small>`;
+}
+
+function openScorersDialog() {
+  const data = getScorers();
+  const usingApiScorers = Array.isArray(scorers) && scorers.some((player) => player.name && Number(player.goals || 0) > 0);
+  document.querySelector("#dialogContent").innerHTML = `
+    <div class="dialog-title">
+      <p class="eyebrow">Vua phá lưới</p>
+      <h3>Bảng xếp hạng cầu thủ ghi bàn</h3>
+      <p>${usingApiScorers ? "Dữ liệu lấy từ API top scorers khi provider trả về." : "Dữ liệu được tự động tổng hợp từ danh sách ghi bàn của các trận đã kết thúc trong app."}</p>
+    </div>
+    <div class="scorers-table" style="display:grid;gap:10px">
+      ${data.length ? data.map((player, index) => `
+        <div class="scorer-row" style="display:grid;grid-template-columns:40px 1fr 52px;gap:12px;align-items:center;padding:12px;border:1px solid rgba(71,74,74,.14);border-radius:8px">
+          <strong>${player.rank || index + 1}</strong>
+          <span style="display:flex;align-items:center;gap:10px">${renderScorerAvatar(player)}<span><b>${player.name}</b>${renderScorerTeam(player)}</span></span>
+          <b>${player.goals || 0}</b>
+        </div>
+      `).join("") : `<p>Chưa có danh sách cầu thủ ghi bàn từ API hoặc dữ liệu sự kiện trận đấu. App sẽ tự cập nhật khi nguồn live trả thêm dữ liệu.</p>`}
+    </div>
+  `;
+  document.querySelector("#matchDialog").showModal();
+}
+
 function switchView(view) {
   state.view = view;
   document.querySelectorAll(".tab-button").forEach((item) => item.classList.toggle("active", item.dataset.view === view));

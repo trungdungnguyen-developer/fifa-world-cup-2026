@@ -541,7 +541,7 @@ async function getEspnScoreboardData() {
   return {
     source: "ESPN public scoreboard",
     updatedAt: new Date().toISOString(),
-    teams: deriveTeamsFromNormalizedMatches(matches),
+    teams: [],
     matches,
     scorers: []
   };
@@ -563,6 +563,7 @@ function normalizeEspnEvent(event) {
   const home = competitors.find((item) => item.homeAway === "home");
   const away = competitors.find((item) => item.homeAway === "away");
   if (!home?.team?.displayName || !away?.team?.displayName) return null;
+  if (isPlaceholderTeamName(home.team.displayName) || isPlaceholderTeamName(away.team.displayName)) return null;
 
   const completed = Boolean(competition.status?.type?.completed);
   const state = competition.status?.type?.state;
@@ -586,29 +587,8 @@ function normalizeEspnEvent(event) {
   };
 }
 
-function deriveTeamsFromNormalizedMatches(matches) {
-  const byName = new Map();
-
-  for (const match of matches) {
-    for (const name of [match.home, match.away]) {
-      if (!name || byName.has(name)) continue;
-      byName.set(name, {
-        id: makeShort(name),
-        name,
-        short: makeShort(name),
-        group: match.group,
-        played: 0,
-        won: 0,
-        drawn: 0,
-        lost: 0,
-        gf: 0,
-        ga: 0,
-        points: 0
-      });
-    }
-  }
-
-  return [...byName.values()];
+function isPlaceholderTeamName(name) {
+  return /\b(group|winner|runner-up|third place|2nd place|1st place|play-off|playoff)\b/i.test(String(name || ""));
 }
 
 async function getFootballDataOrgData() {

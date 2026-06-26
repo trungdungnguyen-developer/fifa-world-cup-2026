@@ -198,7 +198,7 @@ function isSameFixture(left, right) {
   return sameTeams && matchDateKey(left.date) === matchDateKey(right.date);
 }
 
-function mergeLiveMatches(localMatches, remoteMatches) {
+function mergeLiveMatches(localMatches, remoteMatches, { appendUnmatched = true } = {}) {
   const merged = localMatches.map((match) => ({ ...match }));
 
   for (const remote of remoteMatches || []) {
@@ -221,7 +221,7 @@ function mergeLiveMatches(localMatches, remoteMatches) {
         home: merged[index].home,
         away: merged[index].away
       };
-    } else {
+    } else if (appendUnmatched) {
       merged.push(patch);
     }
   }
@@ -230,14 +230,16 @@ function mergeLiveMatches(localMatches, remoteMatches) {
 }
 
 function mergeLiveTeams(localTeams, remoteTeams) {
-  if (Array.isArray(remoteTeams) && remoteTeams.length >= localTeams.length) {
-    return remoteTeams;
-  }
-
   const byName = new Map(localTeams.map((team) => [canonicalTeamName(team.name), { ...team }]));
   for (const remote of remoteTeams || []) {
     const key = canonicalTeamName(remote.name);
-    byName.set(key, { ...(byName.get(key) || {}), ...remote });
+    const local = byName.get(key);
+    if (!local) continue;
+    byName.set(key, {
+      ...local,
+      logo: remote.logo || local.logo,
+      group: local.group || remote.group
+    });
   }
   return [...byName.values()];
 }
@@ -905,8 +907,9 @@ async function refreshRemoteData({ silent = true } = {}) {
     showDataSource(remoteData);
     return;
   }
+  const isScoreboardFallback = remoteData.source === "ESPN public scoreboard";
   teams = mergeLiveTeams(teams, remoteData.teams);
-  matches = mergeLiveMatches(matches, remoteData.matches);
+  matches = mergeLiveMatches(matches, remoteData.matches, { appendUnmatched: !isScoreboardFallback });
   scorers = Array.isArray(remoteData.scorers) ? remoteData.scorers : [];
   renderGroupOptions();
   renderStats();

@@ -486,7 +486,7 @@ async function loadRemoteData() {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const data = await response.json();
 
-    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 2 || !data.matches.length) {
+    if (!Array.isArray(data.matches) || !data.matches.length || (data.teams !== undefined && !Array.isArray(data.teams))) {
       throw new Error("API data is incomplete");
     }
 
@@ -643,7 +643,7 @@ async function loadRemoteData() {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const data = await response.json();
 
-    if (!Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 2 || !data.matches.length) {
+    if (!Array.isArray(data.matches) || !data.matches.length || (data.teams !== undefined && !Array.isArray(data.teams))) {
       throw new Error(data.message || data.apiError || "API data is incomplete");
     }
 
@@ -786,7 +786,6 @@ function parseGoalScorer(event, match) {
   const goals = explicitCount ? Number(explicitCount[1]) : Math.max(1, minuteCount || 1);
   const teamFromText = text.match(/\(([^)]+)\)/)?.[1] || "";
   const cleanTeam = /pen|phan luoi|own goal/i.test(normalize(teamFromText)) ? "" : teamFromText;
-  const team = event?.team || cleanTeam || "";
   const name = event?.player || text
     .replace(/\d{1,3}(?:\+\d+)?'?,?\s*/g, "")
     .replace(/\bx\s*\d+\b/ig, "")
@@ -794,7 +793,46 @@ function parseGoalScorer(event, match) {
     .replace(/·.*$/g, "")
     .trim();
 
+  const team = event?.team || cleanTeam || inferScorerTeam(name, match) || "";
   return name ? { name, team, goals, sourceMatch: `${match.home} - ${match.away}` } : null;
+}
+
+function inferScorerTeam(playerName, match) {
+  const aliases = {
+    "deniz undav": "Đức",
+    "ismael saibari": "Ma Rốc",
+    "johan manzambi": "Thụy Sĩ",
+    "jonathan david": "Canada",
+    "kylian mbappe": "Pháp",
+    "lionel messi": "Argentina",
+    "ayase ueda": "Nhật Bản",
+    "brian brobbey": "Hà Lan",
+    "cody gakpo": "Hà Lan",
+    "vinicius junior": "Brazil",
+    "vinicius jr": "Brazil",
+    "matheus cunha": "Brazil",
+    "erling haaland": "Na Uy",
+    "harry kane": "Anh",
+    "nicolas pepe": "Bờ Biển Ngà",
+    "leroy sane": "Đức",
+    "daizen maeda": "Nhật Bản",
+    "anthony elanga": "Thụy Điển",
+    "jan paul van hecke": "Hà Lan",
+    "hazem mastouri": "Tunisia",
+    "gonzalo plata": "Ecuador",
+    "nilson angulo": "Ecuador",
+    "cristiano ronaldo": "Bồ Đào Nha",
+    "joao felix": "Bồ Đào Nha",
+    "rafael leao": "Bồ Đào Nha",
+    "nuno mendes": "Bồ Đào Nha",
+    "daniel munoz": "Colombia",
+    "ruben vargas": "Thụy Sĩ",
+    "promise david": "Canada"
+  };
+  const key = normalize(playerName || "").replace(/[^a-z0-9]+/g, " ").trim();
+  const team = aliases[key];
+  if (!team) return "";
+  return [match.home, match.away].some((name) => canonicalTeamName(name) === canonicalTeamName(team)) ? team : "";
 }
 
 function deriveScorersFromMatches() {
@@ -909,7 +947,7 @@ async function loadRemoteData() {
     if (!response.ok) throw new Error(`API ${response.status}`);
     const data = await response.json();
 
-    if (data.fallback || !Array.isArray(data.teams) || !Array.isArray(data.matches) || data.teams.length < 2 || !data.matches.length) {
+    if (data.fallback || !Array.isArray(data.matches) || !data.matches.length || (data.teams !== undefined && !Array.isArray(data.teams))) {
       throw new Error(data.message || data.apiError || "API data is incomplete");
     }
 

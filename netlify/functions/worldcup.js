@@ -54,11 +54,21 @@ exports.handler = async (event = {}) => {
           const data = await getFootballDataOrgData();
           return json(data, 200);
         } catch (footballDataError) {
-          return json(fallbackBody(apiFootballError, footballDataError), 200, fallbackCacheControl());
+          try {
+            const data = await getEspnScoreboardData();
+            return json(data, 200);
+          } catch (espnError) {
+            return json(fallbackBody(apiFootballError, footballDataError, espnError), 200, fallbackCacheControl());
+          }
         }
       }
 
-      return json(fallbackBody(apiFootballError), 200, fallbackCacheControl());
+      try {
+        const data = await getEspnScoreboardData();
+        return json(data, 200);
+      } catch (espnError) {
+        return json(fallbackBody(apiFootballError, espnError), 200, fallbackCacheControl());
+      }
     }
   }
 
@@ -67,18 +77,29 @@ exports.handler = async (event = {}) => {
       const data = await getFootballDataOrgData();
       return json(data, 200);
     } catch (footballDataError) {
-      return json(fallbackBody(footballDataError), 200, fallbackCacheControl());
+      try {
+        const data = await getEspnScoreboardData();
+        return json(data, 200);
+      } catch (espnError) {
+        return json(fallbackBody(footballDataError, espnError), 200, fallbackCacheControl());
+      }
     }
   }
 
-  return json({
-    fallback: true,
-    source: "Live data unavailable",
-    updatedAt: new Date().toISOString(),
-    message: "Set API_FOOTBALL_KEY or FOOTBALL_DATA_TOKEN in Netlify environment variables.",
-    teams: [],
-    matches: []
-  }, 200, fallbackCacheControl());
+  try {
+    const data = await getEspnScoreboardData();
+    return json(data, 200);
+  } catch (espnError) {
+    return json({
+      fallback: true,
+      source: "Live data unavailable",
+      updatedAt: new Date().toISOString(),
+      message: "Set API_FOOTBALL_KEY or FOOTBALL_DATA_TOKEN in Netlify environment variables.",
+      apiError: espnError.message,
+      teams: [],
+      matches: []
+    }, 200, fallbackCacheControl());
+  }
 };
 
 async function getApiFootballData() {
@@ -498,6 +519,98 @@ async function apiFootball(path) {
   return response.json();
 }
 
+async function getEspnScoreboardData() {
+  const dates = getEspnDateWindow();
+  const results = await Promise.allSettled(dates.map(async (date) => {
+    const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${date}`, {
+      headers: { "User-Agent": "WorldCup2026ScheduleApp/1.0" }
+    });
+    if (!response.ok) throw new Error(`ESPN scoreboard ${response.status}`);
+    return response.json();
+  }));
+
+  const matches = results
+    .flatMap((result) => result.status === "fulfilled" ? result.value.events || [] : [])
+    .map(normalizeEspnEvent)
+    .filter(Boolean)
+    .filter((match, index, list) => list.findIndex((item) => String(item.apiFixtureId) === String(match.apiFixtureId)) === index)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  if (!matches.length) throw new Error("ESPN scoreboard returned no World Cup matches.");
+
+  return {
+    source: "ESPN public scoreboard",
+    updatedAt: new Date().toISOString(),
+    teams: deriveTeamsFromNormalizedMatches(matches),
+    matches,
+    scorers: []
+  };
+}
+
+function getEspnDateWindow(now = new Date()) {
+  const dates = [];
+  for (let offset = -2; offset <= 4; offset += 1) {
+    const date = new Date(now);
+    date.setUTCDate(date.getUTCDate() + offset);
+    dates.push(date.toISOString().slice(0, 10).replace(/-/g, ""));
+  }
+  return dates;
+}
+
+function normalizeEspnEvent(event) {
+  const competition = event.competitions?.[0];
+  const competitors = competition?.competitors || [];
+  const home = competitors.find((item) => item.homeAway === "home");
+  const away = competitors.find((item) => item.homeAway === "away");
+  if (!home?.team?.displayName || !away?.team?.displayName) return null;
+
+  const completed = Boolean(competition.status?.type?.completed);
+  const state = competition.status?.type?.state;
+  const status = completed ? "finished" : state === "in" ? "live" : "upcoming";
+  const homeScore = Number(home.score);
+  const awayScore = Number(away.score);
+  const hasScore = (completed || status === "live") && !Number.isNaN(homeScore) && !Number.isNaN(awayScore);
+
+  return {
+    id: event.id,
+    apiFixtureId: event.id,
+    group: cleanGroupName(competition.altGameNote || event.season?.slug || ""),
+    status,
+    date: competition.date || event.date,
+    venue: [competition.venue?.fullName, competition.venue?.address?.city].filter(Boolean).join(", "),
+    home: normalizeTeamName(home.team.displayName),
+    away: normalizeTeamName(away.team.displayName),
+    homeScore: hasScore ? homeScore : undefined,
+    awayScore: hasScore ? awayScore : undefined,
+    events: []
+  };
+}
+
+function deriveTeamsFromNormalizedMatches(matches) {
+  const byName = new Map();
+
+  for (const match of matches) {
+    for (const name of [match.home, match.away]) {
+      if (!name || byName.has(name)) continue;
+      byName.set(name, {
+        id: makeShort(name),
+        name,
+        short: makeShort(name),
+        group: match.group,
+        played: 0,
+        won: 0,
+        drawn: 0,
+        lost: 0,
+        gf: 0,
+        ga: 0,
+        points: 0
+      });
+    }
+  }
+
+  return [...byName.values()];
+}
+
 async function getFootballDataOrgData() {
   const [standingsData, matchesData] = await Promise.all([
     footballData("/competitions/WC/standings?season=2026"),
@@ -570,6 +683,25 @@ function normalizeTeamName(name) {
     .replace("Korea Republic", "Hàn Quốc")
     .replace("Côte d'Ivoire", "Bờ Biển Ngà")
     .replace("Czech Republic", "Czechia")
+    .replace("United States", "Hoa Kỳ")
+    .replace("South Korea", "Hàn Quốc")
+    .replace("Ivory Coast", "Bờ Biển Ngà")
+    .replace("Türkiye", "Thổ Nhĩ Kỳ")
+    .replace("Turkey", "Thổ Nhĩ Kỳ")
+    .replace("Germany", "Đức")
+    .replace("Japan", "Nhật Bản")
+    .replace("Sweden", "Thụy Điển")
+    .replace("Netherlands", "Hà Lan")
+    .replace("Norway", "Na Uy")
+    .replace("France", "Pháp")
+    .replace("South Africa", "Nam Phi")
+    .replace("Switzerland", "Thụy Sĩ")
+    .replace("Portugal", "Bồ Đào Nha")
+    .replace("Morocco", "Ma Rốc")
+    .replace("Spain", "Tây Ban Nha")
+    .replace("Belgium", "Bỉ")
+    .replace("Egypt", "Ai Cập")
+    .replace("Saudi Arabia", "Ả Rập Xê Út")
     .replace("IR Iran", "Iran");
 }
 
@@ -588,8 +720,8 @@ function normalizeApiFootballStatus(status) {
   return "upcoming";
 }
 
-function fallbackBody(primaryError, secondaryError) {
-  const messages = [primaryError, secondaryError].filter(Boolean).map((error) => error.message);
+function fallbackBody(...errors) {
+  const messages = errors.filter(Boolean).map((error) => error.message);
   return {
     fallback: true,
     source: "Live data unavailable",
